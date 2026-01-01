@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<!--
+ * 星垣 - Linux服务器实时监控平台
+ * Author: tan91
+ * GitHub: https://github.com/NUDTTAN91
+ * Blog: https://blog.csdn.net/ZXW_NUDT
+ * Project: https://github.com/NUDTTAN91/xingyuan
+-->
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="author" content="tan91">
+    <meta name="description" content="星垣 - Linux服务器实时监控平台">
+    <title>星垣</title>
+    <link rel="icon" type="image/svg+xml" href="/static/Xingyuan.svg">
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="/static/js/auth.js"></script>
+    <style>
+        /* 导航标签样式 */
+        .nav-tabs {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 25px;
+            padding: 0 15px;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .nav-tabs-left {
+            display: flex;
+            gap: 15px;
+        }
+
+        .nav-tab {
+            padding: 10px 20px;
+            background: #fff;
+            border-radius: 8px;
+            text-decoration: none;
+            color: #525f7f;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+        }
+
+        .nav-tab:hover {
+            background: #5e72e4;
+            color: #fff;
+            box-shadow: 0 4px 8px rgba(94, 114, 228, 0.3);
+        }
+
+        .nav-tab.active {
+            background: #5e72e4;
+            color: #fff;
+        }
+
+        .logout-btn {
+            padding: 10px 20px;
+            background: #fff;
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            color: #f5365c;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+        }
+
+        .logout-btn:hover {
+            background: #f5365c;
+            color: #fff;
+            border-color: #f5365c;
+            box-shadow: 0 4px 8px rgba(245, 54, 92, 0.3);
+        }
+    </style>
+</head>
+<body>
+    <!-- 顶部信息栏 -->
+    <div class="footer" style="margin-top: 0; margin-bottom: 20px; border-radius: 0;">
+        <div class="footer-content">
+            <div class="footer-item">
+                最后更新: <span id="update-time">-</span>
+            </div>
+            <div class="footer-item">
+                <span class="refresh-badge">● 自动刷新: 1秒</span>
+            </div>
+            <div class="footer-item">|</div>
+            <div class="footer-item">
+                Author: <a href="https://blog.csdn.net/ZXW_NUDT" target="_blank">tan91</a>
+            </div>
+            <div class="footer-item">|</div>
+            <div class="footer-item">
+                GitHub: <a href="https://github.com/NUDTTAN91/xingyuan" target="_blank">NUDTTAN91/xingyuan</a>
+            </div>
+            <div class="footer-item">|</div>
+            <div class="footer-item">
+                Copyright © 2026 tan91. All Rights Reserved.
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <!-- 导航标签 -->
+        <div class="nav-tabs">
+            <div class="nav-tabs-left">
+                <a href="/" class="nav-tab active">📊 系统监控</a>
+                <a href="/static/docker-monitor.html" class="nav-tab">🐳 Docker监控</a>
+                <a href="/static/history-chart.html" class="nav-tab">📈 历史图表</a>
+                <a href="/static/remote-hosts.html" class="nav-tab">📡 其他主机数据</a>
+            </div>
+            <button class="logout-btn" onclick="logout()">🚪 登出</button>
+        </div>
+
+        <!-- 头部信息 -->
+        <div class="header">
+            <div class="logo">
+                <div class="logo-icon"><img src="/static/Xingyuan.svg" alt="星垣" style="width: 60px; height: 60px;"></div>
+                <div class="logo-text">
+                    <h1>星垣</h1>
+                    <p>Xingyuan Monitor Platform</p>
+                </div>
+            </div>
+            <div class="header-stats">
+                <div class="stat-item">
+                    <div class="stat-label">主机名</div>
+                    <div class="stat-value" id="hostname">-</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">系统版本</div>
+                    <div class="stat-value" id="platform">-</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">运行时间</div>
+                    <div class="stat-value" id="uptime">-</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">数据总量</div>
+                    <div class="stat-value" id="db-records">-</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">数据库大小</div>
+                    <div class="stat-value" id="db-size">-</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">连接状态</div>
+                    <div class="stat-value">
+                        <span id="connection-status" class="connection-status status-disconnected">● 连接中...</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 监控指标卡片 -->
+        <div class="metrics-grid">
+            <!-- CPU -->
+            <div class="metric-card">
+                <div class="metric-header">
+                    <span class="metric-title">CPU使用率</span>
+                    <div class="metric-icon cpu">🖥️</div>
+                </div>
+                <div class="metric-value" id="cpu-value">0.0%</div>
+                <div class="metric-bar">
+                    <div class="metric-bar-fill bar-cpu" id="cpu-bar" style="width: 0%"></div>
+                </div>
+                <div class="metric-detail">
+                    <span id="cpu-cores">- 核心</span>
+                    <span id="cpu-idle">-</span>
+                </div>
+            </div>
+
+            <!-- 内存 -->
+            <div class="metric-card">
+                <div class="metric-header">
+                    <span class="metric-title">内存使用率</span>
+                    <div class="metric-icon memory">💾</div>
+                </div>
+                <div class="metric-value" id="mem-value">0.0%</div>
+                <div class="metric-bar">
+                    <div class="metric-bar-fill bar-memory" id="mem-bar" style="width: 0%"></div>
+                </div>
+                <div class="metric-detail">
+                    <span id="mem-used">- / -</span>
+                    <span id="mem-free">- 可用</span>
+                </div>
+            </div>
+
+            <!-- 磁盘 -->
+            <div class="metric-card">
+                <div class="metric-header">
+                    <span class="metric-title">磁盘使用率</span>
+                    <div class="metric-icon disk">💿</div>
+                </div>
+                <div class="metric-value" id="disk-value">0.0%</div>
+                <div class="metric-bar">
+                    <div class="metric-bar-fill bar-disk" id="disk-bar" style="width: 0%"></div>
+                </div>
+                <div class="metric-detail">
+                    <span id="disk-used">- / -</span>
+                    <span id="disk-free">- 可用</span>
+                </div>
+                <div class="metric-detail" style="margin-top: 8px;">
+                    <span id="disk-read">读: -</span>
+                    <span id="disk-write">写: -</span>
+                </div>
+            </div>
+
+            <!-- 网络 -->
+            <div class="metric-card">
+                <div class="metric-header">
+                    <span class="metric-title">网络监控</span>
+                    <div class="metric-icon network">🌐</div>
+                </div>
+                <div class="network-metrics">
+                    <div class="network-box">
+                        <div class="network-label">⬆️ 上行速度</div>
+                        <div class="network-value" id="net-up">0 <span class="network-unit">KB/s</span></div>
+                    </div>
+                    <div class="network-box">
+                        <div class="network-label">⬇️ 下行速度</div>
+                        <div class="network-value" id="net-down">0 <span class="network-unit">KB/s</span></div>
+                    </div>
+                </div>
+                <div class="metric-detail" style="margin-top: 12px; border-top: 1px solid #f0f0f0; padding-top: 10px;">
+                    <span id="net-sent-total" style="color: #5e72e4; font-weight: 600;">↑ 上行流量: -</span>
+                    <span id="net-recv-total" style="color: #2dce89; font-weight: 600;">↓ 下行流量: -</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 进程监控表格 -->
+        <div class="content-section">
+            <div class="section-header">
+                <div>
+                    <div class="section-title">进程监控 - TOP 10</div>
+                    <div class="section-subtitle">按 CPU 使用率排序</div>
+                </div>
+            </div>
+            <table class="process-table">
+                <thead>
+                    <tr>
+                        <th>进程名称</th>
+                        <th>PID</th>
+                        <th>CPU 使用率</th>
+                        <th>内存使用率</th>
+                        <th>内存占用</th>
+                        <th>运行状态</th>
+                    </tr>
+                </thead>
+                <tbody id="process-table">
+                    <tr>
+                        <td colspan="6" style="text-align: center; color: #95a5a6;">正在加载数据...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+    </div>
+
+    <!-- JavaScript -->
+    <script src="/static/js/monitor.js?v=20251230v3"></script>
+</body>
+</html>

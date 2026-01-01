@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <defs>
+    <!-- 渐变定义 -->
+    <linearGradient id="mainGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#667eea"/>
+      <stop offset="100%" style="stop-color:#764ba2"/>
+    </linearGradient>
+    <linearGradient id="goldGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#ffd700"/>
+      <stop offset="100%" style="stop-color:#ff8c00"/>
+    </linearGradient>
+
+    <!-- 发光效果 -->
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  
+  <!-- 背景圆环 - 象征"垣"(城墙/护卫) -->
+  <circle cx="100" cy="100" r="90" fill="none" stroke="url(#mainGradient)" stroke-width="4" opacity="0.3"/>
+  <circle cx="100" cy="100" r="80" fill="none" stroke="url(#mainGradient)" stroke-width="2" opacity="0.5"/>
+  
+  <!-- 城垣造型 - 六边形防护结构 -->
+  <polygon points="100,15 170,50 170,130 100,165 30,130 30,50" 
+           fill="none" stroke="url(#mainGradient)" stroke-width="3" stroke-linejoin="round"/>
+  
+  <!-- 内部连接线 - 监控网络 -->
+  <line x1="100" y1="15" x2="100" y2="165" stroke="url(#mainGradient)" stroke-width="1.5" opacity="0.4"/>
+  <line x1="30" y1="50" x2="170" y2="130" stroke="url(#mainGradient)" stroke-width="1.5" opacity="0.4"/>
+  <line x1="170" y1="50" x2="30" y2="130" stroke="url(#mainGradient)" stroke-width="1.5" opacity="0.4"/>
+  
+  <!-- 中心Logo - 核心监控点 -->
+  <g filter="url(#glow)">
+    <svg x="45" y="38" width="110" height="110" viewBox="0 0 1000 1000">
+      <g transform="translate(0,1000) scale(0.1,-0.1)" fill="url(#goldGradient)">
+        <path d="M4364 9565 c-457 -58 -851 -215 -1163 -465 -447 -358 -712 -869 -787 -1516 -23 -195 -15 -613 15 -804 114 -735 452 -1262 992 -1549 456 -242 1036 -313 1742 -215 l48 7 -1 -1309 -1 -1309 156 -870 c86 -478 161 -886 167 -905 l11 -35 13 30 c6 17 84 435 173 930 l161 901 0 2212 0 2212 610 0 610 0 0 295 0 295 -1560 0 -1560 0 0 -295 0 -295 610 0 610 0 -2 -632 -3 -632 -71 -22 c-127 -40 -271 -57 -494 -57 -165 0 -227 4 -320 21 -304 55 -529 170 -736 376 -237 236 -372 526 -441 941 -14 89 -18 166 -18 400 0 259 3 304 24 420 141 791 647 1252 1429 1304 317 22 661 -24 925 -124 55 -20 101 -34 104 -32 8 8 154 549 149 554 -15 15 -172 70 -282 98 -236 61 -372 77 -704 81 -213 2 -326 -1 -406 -11z"/>
+      </g>
+    </svg>
+  </g>
+  
+  <!-- 六个节点 - 监控节点(城垣的角楼) -->
+  <circle cx="100" cy="15" r="6" fill="url(#mainGradient)"/>
+  <circle cx="170" cy="50" r="6" fill="url(#mainGradient)"/>
+  <circle cx="170" cy="130" r="6" fill="url(#mainGradient)"/>
+  <circle cx="100" cy="165" r="6" fill="url(#mainGradient)"/>
+  <circle cx="30" cy="130" r="6" fill="url(#mainGradient)"/>
+  <circle cx="30" cy="50" r="6" fill="url(#mainGradient)"/>
+  
+
+  
+  <!-- 脉冲环 - 监控状态指示 -->
+  <circle cx="100" cy="100" r="30" fill="none" stroke="url(#mainGradient)" stroke-width="1" opacity="0.6">
+    <animate attributeName="r" values="30;42;30" dur="2s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values="0.6;0.1;0.6" dur="2s" repeatCount="indefinite"/>
+  </circle>
+</svg>

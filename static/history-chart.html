@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<!--
+ * 星垣 - 历史数据图表
+ * Author: tan91
+ * GitHub: https://github.com/NUDTTAN91
+ * Blog: https://blog.csdn.net/ZXW_NUDT
+ * Project: https://github.com/NUDTTAN91/xingyuan
+-->
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="author" content="tan91">
+    <meta name="description" content="星垣 - 历史数据图表">
+    <title>历史数据图表 - 星垣</title>
+    <link rel="icon" type="image/svg+xml" href="/static/Xingyuan.svg">
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/history-chart.css">
+    <script src="/static/js/auth.js"></script>
+    <style>
+        /* 导航标签样式 */
+        .nav-tabs {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 25px;
+            padding: 0 15px;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .nav-tabs-left {
+            display: flex;
+            gap: 15px;
+        }
+
+        .nav-tab {
+            padding: 10px 20px;
+            background: #fff;
+            border-radius: 8px;
+            text-decoration: none;
+            color: #525f7f;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+        }
+
+        .nav-tab:hover {
+            background: #5e72e4;
+            color: #fff;
+            box-shadow: 0 4px 8px rgba(94, 114, 228, 0.3);
+        }
+
+        .nav-tab.active {
+            background: #5e72e4;
+            color: #fff;
+        }
+
+        .logout-btn {
+            padding: 10px 20px;
+            background: #fff;
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            color: #f5365c;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+        }
+
+        .logout-btn:hover {
+            background: #f5365c;
+            color: #fff;
+            border-color: #f5365c;
+            box-shadow: 0 4px 8px rgba(245, 54, 92, 0.3);
+        }
+    </style>
+</head>
+<body>
+    <!-- 顶部信息栏 -->
+    <div class="footer" style="margin-top: 0; margin-bottom: 20px; border-radius: 0;">
+        <div class="footer-content">
+            <div class="footer-item">
+                Author: <a href="https://blog.csdn.net/ZXW_NUDT" target="_blank">tan91</a>
+            </div>
+            <div class="footer-item">|</div>
+            <div class="footer-item">
+                GitHub: <a href="https://github.com/NUDTTAN91/xingyuan" target="_blank">NUDTTAN91/xingyuan</a>
+            </div>
+            <div class="footer-item">|</div>
+            <div class="footer-item">
+                Copyright © 2026 tan91. All Rights Reserved.
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <!-- 导航标签 -->
+        <div class="nav-tabs">
+            <div class="nav-tabs-left">
+                <a href="/" class="nav-tab">📊 系统监控</a>
+                <a href="/static/docker-monitor.html" class="nav-tab">🐳 Docker监控</a>
+                <a href="/static/history-chart.html" class="nav-tab active">📈 历史图表</a>
+                <a href="/static/remote-hosts.html" class="nav-tab">📡 其他主机数据</a>
+            </div>
+            <button class="logout-btn" onclick="logout()">🚪 登出</button>
+        </div>
+
+        <!-- 头部信息 -->
+        <div class="header">
+            <div class="logo">
+                <div class="logo-icon"><img src="/static/Xingyuan.svg" alt="星垣" style="width: 60px; height: 60px;"></div>
+                <div class="logo-text">
+                    <h1>星垣 - 历史数据图表</h1>
+                    <p>Historical Data Chart</p>
+                </div>
+            </div>
+            <div class="header-stats">
+                <div class="stat-item">
+                    <div class="stat-label">数据源</div>
+                    <div class="stat-value">SQLite</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">采集频率</div>
+                    <div class="stat-value">1秒</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">监控指标</div>
+                    <div class="stat-value">CPU · 内存 · 磁盘 · 网络</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- CPU使用率图表 -->
+        <div id="cpu-chart-section" class="chart-section">
+            <div class="chart-header">
+                <div>
+                    <div class="chart-title">💻 CPU使用率趋势图</div>
+                    <div class="chart-subtitle">实时监控CPU使用率变化趋势（每秒自动更新）</div>
+                </div>
+            </div>
+            
+            <!-- CPU时间选择控制面板 -->
+            <div class="time-control">
+                <div class="control-row">
+                    <span class="control-label">时间范围</span>
+                    <input type="datetime-local" class="time-input" id="cpu-start-time">
+                    <span style="color: #8898aa;">至</span>
+                    <input type="datetime-local" class="time-input" id="cpu-end-time">
+                    <button class="query-btn" onclick="cpuManualQuery()">查询</button>
+                </div>
+                <div class="control-row">
+                    <span class="control-label">快捷选择</span>
+                    <div class="quick-time-btns">
+                        <button class="quick-time-btn active" onclick="cpuSelectQuickTime(1)">1分钟</button>
+                        <button class="quick-time-btn" onclick="cpuSelectQuickTime(5)">5分钟</button>
+                        <button class="quick-time-btn" onclick="cpuSelectQuickTime(15)">15分钟</button>
+                        <button class="quick-time-btn" onclick="cpuSelectQuickTime(30)">30分钟</button>
+                        <button class="quick-time-btn" onclick="cpuSelectQuickTime(60)">1小时</button>
+                        <button class="quick-time-btn" onclick="cpuSelectQuickTime(180)">3小时</button>
+                        <button class="quick-time-btn" onclick="cpuSelectQuickTime(360)">6小时</button>
+                        <button class="quick-time-btn" onclick="cpuSelectQuickTime(1440)">24小时</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 加载提示 -->
+            <div id="cpu-loading" class="loading">正在加载数据...</div>
+
+            <!-- 错误提示 -->
+            <div id="cpu-error" class="error-msg" style="display: none;"></div>
+
+            <!-- CPU图表容器 -->
+            <div id="cpu-chart-container" style="display: none;">
+                <div class="chart-container">
+                    <canvas id="cpu-chart"></canvas>
+                </div>
+                <div class="chart-info">
+                    <span>数据总量: <strong id="cpu-data-count">-</strong></span>
+                    <span style="margin-left: 20px;">最后更新: <strong id="cpu-update-time">-</strong></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 内存使用率图表 -->
+        <div id="memory-chart-section" class="chart-section">
+            <div class="chart-header">
+                <div>
+                    <div class="chart-title">🧠 内存使用率趋势图</div>
+                    <div class="chart-subtitle">实时监控内存使用率变化趋势（每秒自动更新）</div>
+                </div>
+            </div>
+            
+            <!-- 内存时间选择控制面板 -->
+            <div class="time-control">
+                <div class="control-row">
+                    <span class="control-label">时间范围</span>
+                    <input type="datetime-local" class="time-input" id="memory-start-time">
+                    <span style="color: #8898aa;">至</span>
+                    <input type="datetime-local" class="time-input" id="memory-end-time">
+                    <button class="query-btn" onclick="memoryManualQuery()">查询</button>
+                </div>
+                <div class="control-row">
+                    <span class="control-label">快捷选择</span>
+                    <div class="quick-time-btns">
+                        <button class="quick-time-btn active" onclick="memorySelectQuickTime(1)">1分钟</button>
+                        <button class="quick-time-btn" onclick="memorySelectQuickTime(5)">5分钟</button>
+                        <button class="quick-time-btn" onclick="memorySelectQuickTime(15)">15分钟</button>
+                        <button class="quick-time-btn" onclick="memorySelectQuickTime(30)">30分钟</button>
+                        <button class="quick-time-btn" onclick="memorySelectQuickTime(60)">1小时</button>
+                        <button class="quick-time-btn" onclick="memorySelectQuickTime(180)">3小时</button>
+                        <button class="quick-time-btn" onclick="memorySelectQuickTime(360)">6小时</button>
+                        <button class="quick-time-btn" onclick="memorySelectQuickTime(1440)">24小时</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 加载提示 -->
+            <div id="memory-loading" class="loading">正在加载数据...</div>
+
+            <!-- 错误提示 -->
+            <div id="memory-error" class="error-msg" style="display: none;"></div>
+
+            <!-- 内存图表容器 -->
+            <div id="memory-chart-container" style="display: none;">
+                <div class="chart-container">
+                    <canvas id="memory-chart"></canvas>
+                </div>
+                <div class="chart-info">
+                    <span>数据总量: <strong id="memory-data-count">-</strong></span>
+                    <span style="margin-left: 20px;">最后更新: <strong id="memory-update-time">-</strong></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 磁盘使用率图表 -->
+        <div id="disk-chart-section" class="chart-section">
+            <div class="chart-header">
+                <div>
+                    <div class="chart-title">💾 磁盘使用率趋势图</div>
+                    <div class="chart-subtitle">实时监控磁盘使用率变化趋势（每秒自动更新）</div>
+                </div>
+            </div>
+            
+            <!-- 磁盘时间选择控制面板 -->
+            <div class="time-control">
+                <div class="control-row">
+                    <span class="control-label">时间范围</span>
+                    <input type="datetime-local" class="time-input" id="disk-start-time">
+                    <span style="color: #8898aa;">至</span>
+                    <input type="datetime-local" class="time-input" id="disk-end-time">
+                    <button class="query-btn" onclick="diskManualQuery()">查询</button>
+                </div>
+                <div class="control-row">
+                    <span class="control-label">快捷选择</span>
+                    <div class="quick-time-btns">
+                        <button class="quick-time-btn active" onclick="diskSelectQuickTime(1)">1分钟</button>
+                        <button class="quick-time-btn" onclick="diskSelectQuickTime(5)">5分钟</button>
+                        <button class="quick-time-btn" onclick="diskSelectQuickTime(15)">15分钟</button>
+                        <button class="quick-time-btn" onclick="diskSelectQuickTime(30)">30分钟</button>
+                        <button class="quick-time-btn" onclick="diskSelectQuickTime(60)">1小时</button>
+                        <button class="quick-time-btn" onclick="diskSelectQuickTime(180)">3小时</button>
+                        <button class="quick-time-btn" onclick="diskSelectQuickTime(360)">6小时</button>
+                        <button class="quick-time-btn" onclick="diskSelectQuickTime(1440)">24小时</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 加载提示 -->
+            <div id="disk-loading" class="loading">正在加载数据...</div>
+
+            <!-- 错误提示 -->
+            <div id="disk-error" class="error-msg" style="display: none;"></div>
+
+            <!-- 磁盘图表容器 -->
+            <div id="disk-chart-container" style="display: none;">
+                <div class="chart-container">
+                    <canvas id="disk-chart"></canvas>
+                </div>
+                <div class="chart-info">
+                    <span>数据总量: <strong id="disk-data-count">-</strong></span>
+                    <span style="margin-left: 20px;">最后更新: <strong id="disk-update-time">-</strong></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 网络监控图表 -->
+        <div id="network-chart-section" class="chart-section">
+            <div class="chart-header">
+                <div>
+                    <div class="chart-title">🌐 网络监控趋势图</div>
+                    <div class="chart-subtitle">实时监控上下行速度变化趋势（每秒自动更新）</div>
+                </div>
+            </div>
+            
+            <!-- 网络时间选择控制面板 -->
+            <div class="time-control">
+                <div class="control-row">
+                    <span class="control-label">时间范围</span>
+                    <input type="datetime-local" class="time-input" id="network-start-time">
+                    <span style="color: #8898aa;">至</span>
+                    <input type="datetime-local" class="time-input" id="network-end-time">
+                    <button class="query-btn" onclick="networkManualQuery()">查询</button>
+                </div>
+                <div class="control-row">
+                    <span class="control-label">快捷选择</span>
+                    <div class="quick-time-btns">
+                        <button class="quick-time-btn active" onclick="networkSelectQuickTime(1)">1分钟</button>
+                        <button class="quick-time-btn" onclick="networkSelectQuickTime(5)">5分钟</button>
+                        <button class="quick-time-btn" onclick="networkSelectQuickTime(15)">15分钟</button>
+                        <button class="quick-time-btn" onclick="networkSelectQuickTime(30)">30分钟</button>
+                        <button class="quick-time-btn" onclick="networkSelectQuickTime(60)">1小时</button>
+                        <button class="quick-time-btn" onclick="networkSelectQuickTime(180)">3小时</button>
+                        <button class="quick-time-btn" onclick="networkSelectQuickTime(360)">6小时</button>
+                        <button class="quick-time-btn" onclick="networkSelectQuickTime(1440)">24小时</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 加载提示 -->
+            <div id="network-loading" class="loading">正在加载数据...</div>
+
+            <!-- 错误提示 -->
+            <div id="network-error" class="error-msg" style="display: none;"></div>
+
+            <!-- 网络图表容器 -->
+            <div id="network-chart-container" style="display: none;">
+                <div class="chart-container">
+                    <canvas id="network-chart"></canvas>
+                </div>
+                <div class="chart-info">
+                    <span>数据总量: <strong id="network-data-count">-</strong></span>
+                    <span style="margin-left: 20px;">最后更新: <strong id="network-update-time">-</strong></span>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Chart.js 库 -->
+    <script src="/static/js/chart.umd.min.js"></script>
+    <!-- 历史图表脚本 -->
+    <script src="/static/js/history-chart-v4.js?t=20251207v8"></script>
+</body>
+</html>

@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<!--
+ * 星垣 - Docker监控页面
+ * Author: tan91
+ * GitHub: https://github.com/NUDTTAN91
+ * Blog: https://blog.csdn.net/ZXW_NUDT
+ * Project: https://github.com/NUDTTAN91/xingyuan
+-->
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="author" content="tan91">
+    <meta name="description" content="星垣 - Docker容器与镜像监控">
+    <title>星垣 - Docker监控</title>
+    <link rel="icon" type="image/svg+xml" href="/static/Xingyuan.svg">
+    <link rel="stylesheet" href="/static/css/style.css?v=20251207v3">
+    <link rel="stylesheet" href="/static/css/docker-monitor.css?v=20251207v3">
+    <script src="/static/js/auth.js"></script>
+    <style>
+        /* 导航标签样式 */
+        .nav-tabs {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 25px;
+            padding: 0 15px;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .nav-tabs-left {
+            display: flex;
+            gap: 15px;
+        }
+
+        .nav-tab {
+            padding: 10px 20px;
+            background: #fff;
+            border-radius: 8px;
+            text-decoration: none;
+            color: #525f7f;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+        }
+
+        .nav-tab:hover {
+            background: #5e72e4;
+            color: #fff;
+            box-shadow: 0 4px 8px rgba(94, 114, 228, 0.3);
+        }
+
+        .nav-tab.active {
+            background: #5e72e4;
+            color: #fff;
+        }
+
+        .logout-btn {
+            padding: 10px 20px;
+            background: #fff;
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            color: #f5365c;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+        }
+
+        .logout-btn:hover {
+            background: #f5365c;
+            color: #fff;
+            border-color: #f5365c;
+            box-shadow: 0 4px 8px rgba(245, 54, 92, 0.3);
+        }
+    </style>
+</head>
+<body>
+    <!-- 顶部信息栏 -->
+    <div class="footer" style="margin-top: 0; margin-bottom: 20px; border-radius: 0;">
+        <div class="footer-content">
+            <div class="footer-item">
+                <span class="refresh-badge" id="auto-refresh-status">● 自动刷新: 1秒</span>
+            </div>
+            <div class="footer-item">|</div>
+            <div class="footer-item">
+                Author: <a href="https://blog.csdn.net/ZXW_NUDT" target="_blank">tan91</a>
+            </div>
+            <div class="footer-item">|</div>
+            <div class="footer-item">
+                GitHub: <a href="https://github.com/NUDTTAN91/xingyuan" target="_blank">NUDTTAN91/xingyuan</a>
+            </div>
+            <div class="footer-item">|</div>
+            <div class="footer-item">
+                Copyright © 2026 tan91. All Rights Reserved.
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <!-- 导航标签 -->
+        <div class="nav-tabs">
+            <div class="nav-tabs-left">
+                <a href="/" class="nav-tab">📊 系统监控</a>
+                <a href="/static/docker-monitor.html" class="nav-tab active">🐳 Docker监控</a>
+                <a href="/static/history-chart.html" class="nav-tab">📈 历史图表</a>
+                <a href="/static/remote-hosts.html" class="nav-tab">📡 其他主机数据</a>
+            </div>
+            <button class="logout-btn" onclick="logout()">🚪 登出</button>
+        </div>
+
+        <!-- 头部信息 -->
+        <div class="header">
+            <div class="logo">
+                <div class="logo-icon"><img src="/static/Xingyuan.svg" alt="星垣" style="width: 60px; height: 60px;"></div>
+                <div class="logo-text">
+                    <h1>星垣 - Docker监控</h1>
+                    <p>Docker Container & Image Monitor</p>
+                </div>
+            </div>
+            <div class="header-stats">
+                <div class="stat-item">
+                    <div class="stat-label">容器总数</div>
+                    <div class="stat-value" id="container-count">-</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">运行中</div>
+                    <div class="stat-value" id="running-count" style="color: #2dce89;">-</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">镜像总数</div>
+                    <div class="stat-value" id="image-count">-</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">连接状态</div>
+                    <div class="stat-value">
+                        <span id="connection-status" class="connection-status status-disconnected">● 连接中...</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 控制栏 -->
+        <div class="control-bar">
+            <div class="control-left">
+                <button class="refresh-btn" onclick="manualRefresh()">
+                    <span>🔄</span>
+                    <span>手动刷新</span>
+                </button>
+                <div class="auto-refresh-control">
+                    <label class="auto-refresh-label">刷新间隔:</label>
+                    <div class="refresh-input-group">
+                        <input type="number" class="refresh-input" id="refresh-interval-input" value="1" min="0" step="1" onchange="updateRefreshIntervalFromInput()">
+                        <select class="refresh-unit-select" id="refresh-unit" onchange="updateRefreshIntervalFromInput()">
+                            <option value="1" selected>秒</option>
+                            <option value="60">分钟</option>
+                            <option value="3600">小时</option>
+                        </select>
+                    </div>
+                    <div class="preset-buttons">
+                        <button class="preset-btn" onclick="setRefreshInterval(5, 1)">5秒</button>
+                        <button class="preset-btn" onclick="setRefreshInterval(10, 1)">10秒</button>
+                        <button class="preset-btn" onclick="setRefreshInterval(30, 1)">30秒</button>
+                        <button class="preset-btn" onclick="setRefreshInterval(1, 60)">1分钟</button>
+                        <button class="preset-btn" onclick="setRefreshInterval(5, 60)">5分钟</button>
+                        <button class="preset-btn" onclick="setRefreshInterval(0, 1)">关闭</button>
+                    </div>
+                </div>
+            </div>
+            <div class="update-time">
+                最后更新: <span id="update-time">-</span>
+            </div>
+        </div>
+
+        <!-- Docker容器列表 -->
+        <div class="table-wrapper">
+            <div class="table-header">
+                <div class="table-title">
+                    📦 Docker监控
+                </div>
+                <div class="view-switch">
+                    <button class="switch-btn active" onclick="switchView('container')">容器列表</button>
+                    <button class="switch-btn" onclick="switchView('image')">镜像列表</button>
+                </div>
+            </div>
+            
+            <!-- 容器列表视图 -->
+            <div id="container-view" class="table-view active">
+                <div style="margin-bottom: 15px; color: #8898aa; font-size: 14px;">
+                    当前显示: <span id="container-list-count">0</span> 个容器
+                </div>
+                <table class="docker-table container-table">
+                    <thead>
+                        <tr>
+                            <th>容器ID</th>
+                            <th>镜像</th>
+                            <th>容器名称</th>
+                            <th>状态</th>
+                            <th>端口映射</th>
+                            <th>创建时间</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="container-table">
+                        <tr>
+                            <td colspan="7" style="text-align: center; color: #95a5a6;">正在加载数据...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- 镜像列表视图 -->
+            <div id="image-view" class="table-view">
+                <div style="margin-bottom: 15px; color: #8898aa; font-size: 14px;">
+                    当前显示: <span id="image-list-count">0</span> 个镜像
+                </div>
+                <table class="docker-table image-table">
+                    <thead>
+                        <tr>
+                            <th>仓库名称</th>
+                            <th>标签</th>
+                            <th>镜像ID</th>
+                            <th>大小</th>
+                            <th>创建时间</th>
+                        </tr>
+                    </thead>
+                    <tbody id="image-table">
+                        <tr>
+                            <td colspan="5" style="text-align: center; color: #95a5a6;">正在加载数据...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Docker监控脚本 -->
+    <script src="/static/js/docker-monitor.js?v=20251207v3"></script>
+</body>
+</html>
