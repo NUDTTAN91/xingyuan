@@ -9,9 +9,24 @@
 </p>
 
 <p align="center">
-  <a href="https://golang.org"><img src="https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat-square&logo=go" alt="Go"></a>
-  <a href="https://www.docker.com"><img src="https://img.shields.io/badge/Docker-支持-2496ED?style=flat-square&logo=docker" alt="Docker"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green?style=flat-square" alt="License"></a>
+  <a href="https://github.com/NUDTTAN91"><img src="https://img.shields.io/badge/GitHub-NUDTTAN91-blue?style=flat&logo=github" /></a>
+  <a href="https://hub.docker.com/u/nudttan91"><img src="https://img.shields.io/badge/DockerHub-nudttan91-2496ED?style=flat&logo=docker&logoColor=white" /></a>
+  <a href="https://blog.csdn.net/ZXW_NUDT"><img src="https://img.shields.io/badge/CSDN-ZXW__NUDT-FC5531?style=flat&logo=csdn&logoColor=white" /></a>
+</p>
+
+<p align="center">
+  <a href="https://golang.org"><img src="https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go&logoColor=white" /></a>
+  <a href="https://www.docker.com"><img src="https://img.shields.io/badge/Docker-支持-2496ED?style=flat&logo=docker&logoColor=white" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green?style=flat" /></a>
+  <img src="https://img.shields.io/badge/Platform-Linux-orange?style=flat&logo=linux&logoColor=white" />
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/github/stars/NUDTTAN91/xingyuan?style=flat&logo=github" />
+  <img src="https://img.shields.io/github/forks/NUDTTAN91/xingyuan?style=flat&logo=github" />
+  <img src="https://img.shields.io/github/last-commit/NUDTTAN91/xingyuan?style=flat" />
+  <img src="https://img.shields.io/github/repo-size/NUDTTAN91/xingyuan?style=flat" />
+  <img src="https://img.shields.io/docker/pulls/nudttan91/xingyuan?style=flat&logo=docker" />
 </p>
 
 ---
