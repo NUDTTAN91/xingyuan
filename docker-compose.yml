@@ -8,10 +8,10 @@ version: '3.8'
 services:
   # 监控端服务
   xingyuan-monitor:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    # image: xingyuan/monitor:latest
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
+    image: nudttan91/xingyuan:latest
     container_name: xingyuan-monitor
     hostname: xingyuan-monitor
     restart: unless-stopped
