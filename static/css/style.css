@@ -1,0 +1,455 @@
+/*
+ * 星垣 - 样式文件
+ * Author: tan91
+ * GitHub: https://github.com/NUDTTAN91
+ * Blog: https://blog.csdn.net/ZXW_NUDT
+ * Project: https://github.com/NUDTTAN91/xingyuan
+ */
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    background: #f5f7fa;
+    color: #2c3e50;
+    padding: 20px;
+    min-height: 100vh;
+}
+
+.container {
+    max-width: 1400px;
+    margin: 0 auto;
+}
+
+/* ========== 头部样式 ========== */
+.header {
+    background: #fff;
+    padding: 25px 30px;
+    border-radius: 10px;
+    margin-bottom: 25px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.logo {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+}
+
+.logo-icon {
+    width: 60px;
+    height: 60px;
+    background: transparent;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+}
+
+.logo-text h1 {
+    font-size: 24px;
+    color: #2c3e50;
+    font-weight: 600;
+}
+
+.logo-text p {
+    font-size: 12px;
+    color: #95a5a6;
+    margin-top: 2px;
+}
+
+.header-stats {
+    display: flex;
+    gap: 30px;
+}
+
+.stat-item {
+    text-align: center;
+    padding: 0 15px;
+    border-left: 2px solid #ecf0f1;
+}
+
+.stat-item:first-child {
+    border-left: none;
+}
+
+.stat-label {
+    font-size: 11px;
+    color: #95a5a6;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 5px;
+}
+
+.stat-value {
+    font-size: 18px;
+    font-weight: 600;
+    color: #2c3e50;
+}
+
+/* ========== 指标卡片样式 ========== */
+.metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 20px;
+    margin-bottom: 25px;
+}
+
+.metric-card {
+    background: #fff;
+    border-radius: 10px;
+    padding: 25px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    border-left: 4px solid #5e72e4;
+    transition: all 0.3s ease;
+}
+
+.metric-card:hover {
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+    transform: translateY(-2px);
+}
+
+.metric-card:nth-child(2) {
+    border-left-color: #11cdef;
+}
+
+.metric-card:nth-child(3) {
+    border-left-color: #2dce89;
+}
+
+.metric-card:nth-child(4) {
+    border-left-color: #fb6340;
+}
+
+.metric-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+}
+
+.metric-title {
+    font-size: 13px;
+    color: #8898aa;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.metric-icon {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+}
+
+.metric-icon.cpu { background: rgba(94, 114, 228, 0.1); color: #5e72e4; }
+.metric-icon.memory { background: rgba(17, 205, 239, 0.1); color: #11cdef; }
+.metric-icon.disk { background: rgba(45, 206, 137, 0.1); color: #2dce89; }
+.metric-icon.network { background: rgba(251, 99, 64, 0.1); color: #fb6340; }
+
+.metric-value {
+    font-size: 36px;
+    font-weight: 700;
+    color: #2c3e50;
+    margin-bottom: 12px;
+}
+
+.metric-bar {
+    height: 6px;
+    background: #f0f3f5;
+    border-radius: 10px;
+    overflow: hidden;
+    margin-bottom: 12px;
+}
+
+.metric-bar-fill {
+    height: 100%;
+    border-radius: 10px;
+    transition: width 0.5s ease;
+}
+
+.bar-cpu { background: linear-gradient(90deg, #5e72e4 0%, #825ee4 100%); }
+.bar-memory { background: linear-gradient(90deg, #11cdef 0%, #1171ef 100%); }
+.bar-disk { background: linear-gradient(90deg, #2dce89 0%, #2dcecc 100%); }
+
+.metric-detail {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    color: #8898aa;
+}
+
+/* ========== 网络指标样式 ========== */
+.network-metrics {
+    display: flex;
+    gap: 10px;
+}
+
+.network-box {
+    flex: 1;
+    text-align: center;
+    padding: 12px;
+    background: #f7fafc;
+    border-radius: 8px;
+}
+
+.network-label {
+    font-size: 11px;
+    color: #8898aa;
+    margin-bottom: 6px;
+    text-transform: uppercase;
+}
+
+.network-value {
+    font-size: 20px;
+    font-weight: 600;
+    color: #2c3e50;
+}
+
+.network-unit {
+    font-size: 12px;
+    color: #8898aa;
+}
+
+/* 流量统计样式 */
+.network-traffic-stats {
+    display: flex;
+    gap: 10px;
+    margin-top: 15px;
+    padding-top: 15px;
+    border-top: 1px solid #f0f3f5;
+}
+
+.traffic-stat-item {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px;
+    background: #f7fafc;
+    border-radius: 8px;
+    transition: all 0.3s ease;
+}
+
+.traffic-stat-item:hover {
+    background: #edf2f7;
+    transform: translateX(2px);
+}
+
+.traffic-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-weight: bold;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.traffic-info {
+    flex: 1;
+}
+
+.traffic-label {
+    font-size: 11px;
+    color: #8898aa;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 4px;
+}
+
+.traffic-value {
+    font-size: 16px;
+    font-weight: 600;
+    color: #2c3e50;
+}
+
+/* ========== 内容区域样式 ========== */
+.content-section {
+    background: #fff;
+    border-radius: 10px;
+    padding: 30px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    padding-bottom: 15px;
+    border-bottom: 2px solid #f0f3f5;
+}
+
+.section-title {
+    font-size: 18px;
+    font-weight: 600;
+    color: #2c3e50;
+}
+
+.section-subtitle {
+    font-size: 12px;
+    color: #8898aa;
+}
+
+/* ========== 表格样式 ========== */
+table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+}
+
+thead {
+    background: #f7fafc;
+}
+
+th {
+    padding: 12px 15px;
+    text-align: left;
+    font-size: 12px;
+    color: #8898aa;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+/* 固定列宽 - 仅应用于进程表格 */
+.process-table th:nth-child(1), .process-table td:nth-child(1) { width: 30%; }  /* 进程名称 */
+.process-table th:nth-child(2), .process-table td:nth-child(2) { width: 10%; }  /* PID */
+.process-table th:nth-child(3), .process-table td:nth-child(3) { width: 15%; }  /* CPU使用率 */
+.process-table th:nth-child(4), .process-table td:nth-child(4) { width: 12%; }  /* 内存使用率 */
+.process-table th:nth-child(5), .process-table td:nth-child(5) { width: 20%; }  /* 内存占用 */
+.process-table th:nth-child(6), .process-table td:nth-child(6) { width: 13%; }  /* 运行状态 */
+
+/* 表格单元格样式 - 仅应用于进程表格 */
+.process-table td {
+    padding: 15px;
+    font-size: 14px;
+    color: #525f7f;
+    border-bottom: 1px solid #f0f3f5;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* 进程名称列显示省略号 */
+.process-table td:nth-child(1) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* 表格行悬停效果 - 仅应用于进程表格 */
+.process-table tbody tr:hover {
+    background: #f7fafc;
+}
+
+/* ========== 徽章样式 ========== */
+.badge {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.badge-success {
+    background: #d4f4dd;
+    color: #1f7a3e;
+}
+
+.progress-mini {
+    display: inline-block;
+    width: 60px;
+    height: 4px;
+    background: #f0f3f5;
+    border-radius: 4px;
+    overflow: hidden;
+    vertical-align: middle;
+    margin-left: 8px;
+}
+
+.progress-mini-fill {
+    height: 100%;
+    background: #5e72e4;
+    border-radius: 4px;
+}
+
+/* ========== 页脚样式 ========== */
+.footer {
+    text-align: center;
+    margin-top: 20px;
+    padding: 20px 15px;
+    color: #8898aa;
+    font-size: 12px;
+    background: #fff;
+    border-radius: 10px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.footer-content {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 20px;
+    flex-wrap: wrap;
+}
+
+.footer-item {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.footer a {
+    color: #5e72e4;
+    text-decoration: none;
+    transition: color 0.3s ease;
+}
+
+.footer a:hover {
+    color: #3d52c4;
+    text-decoration: underline;
+}
+
+.refresh-badge {
+    display: inline-block;
+    background: #d4f4dd;
+    color: #1f7a3e;
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.connection-status {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.status-connected {
+    background: #d4f4dd;
+    color: #1f7a3e;
+}
+
+.status-disconnected {
+    background: #ffe5e5;
+    color: #d63031;
+}
