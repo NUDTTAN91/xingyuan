@@ -1,0 +1,29 @@
+# 数据库文件
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# 备份文件
+*.bak
+*.backup
+
+# IDE/编辑器
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# 编译产物
+xingyuan
+*.exe
+*.exe~
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 日志
+*.log
+logs/
