@@ -76,9 +76,9 @@ RUN addgroup -g 1000 xingyuan && \
 # 暴露端口（实际端口由SERVER_PORT环境变量控制，默认80）
 EXPOSE ${SERVER_PORT:-80}
 
-# 健康检查（使用环境变量SERVER_PORT指定的端口）
+# 健康检查（使用环境变量SERVER_PORT指定的端口，/api/health为公开端点无需认证）
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:${SERVER_PORT:-80}/api/metrics || exit 1
+    CMD wget --no-verbose --tries=1 --spider http://localhost:${SERVER_PORT:-80}/api/health || exit 1
 
 # 启动命令（不再指定端口，由环境变量控制）
 ENTRYPOINT ["./xingyuan-monitor"]

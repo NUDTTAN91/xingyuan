@@ -8,10 +8,10 @@ version: '3.8'
 services:
   # 监控端服务
   xingyuan-monitor:
-    # build:
-    #   context: .
-    #   dockerfile: Dockerfile
-    image: nudttan91/xingyuan:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # image: nudttan91/xingyuan:latest
     container_name: xingyuan-monitor
     hostname: xingyuan-monitor
     restart: unless-stopped
@@ -31,20 +31,28 @@ services:
     
     # 环境变量
     environment:
+      # 时区（监控数据时间戳的唯一时区来源，由此处决定）
+      # 注意：部署后请勿随意变更，变更会导致历史图表新老数据时间轴偏移（启动日志会告警）
       - TZ=Asia/Shanghai
       - HOST_PROC=/host/proc
       - HOST_SYS=/host/sys
       - HOST_ROOT=/host
       - SERVER_PORT=81  # 服务端口，可以自定义修改
       
-      # 登录认证配置
+      # 登录认证配置（管理员凭据的唯一配置入口，无网页修改功能）
+      # 修改用户名或密码后需执行 docker compose up -d 重建容器生效
       - ADMIN_USERNAME=root                     # 管理员用户名
-      - ADMIN_PASSWORD=root                     # 管理员密码（请修改为强密码）
+      - ADMIN_PASSWORD=root                     # 管理员密码（必填，请修改为强密码！也可填bcrypt哈希，哈希中的$需写成$$）
       - JWT_SECRET=xingyuan-secret-key-please-change-this-in-production  # JWT密钥（请修改）
       - ACCESS_TOKEN_EXPIRE_MINUTES=120         # Access Token有效期（2小时）
       - REFRESH_TOKEN_EXPIRE_DAYS=7             # Refresh Token有效期（7天）
       - MAX_LOGIN_ATTEMPTS=5                    # 最大登录失败次数
       - LOGIN_LOCK_MINUTES=15                   # 登录锁定时间（分钟）
+      # - TRUSTED_PROXIES=192.168.1.1           # 可信反向代理IP/CIDR（逗号分隔）。默认不信任任何代理头，
+      #                                         # 仅当部署在Nginx等反代之后才需配置，否则登录锁定按真实来源IP判定
+      
+      # 数据保留配置
+      - METRICS_RETENTION_DAYS=30               # 原始秒级数据保留天数，超期自动压缩为分钟级
     
     # 特权模式以访问宿主机信息
     privileged: true
@@ -60,9 +68,9 @@ services:
           cpus: '0.1'
           memory: 64M
     
-    # 健康检查
+    # 健康检查（/api/health为公开端点，无需认证）
     healthcheck:
-      test: ["CMD", "sh", "-c", "wget --no-verbose --tries=1 --spider http://localhost:$${SERVER_PORT}/api/metrics"]
+      test: ["CMD", "sh", "-c", "wget --no-verbose --tries=1 --spider http://localhost:$${SERVER_PORT}/api/health"]
       interval: 30s
       timeout: 3s
       retries: 3

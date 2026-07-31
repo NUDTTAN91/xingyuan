@@ -142,14 +142,17 @@ xingyuan/
 
 | 变量名 | 默认值 | 说明 |
 |--------|--------|------|
+| `TZ` | Asia/Shanghai | 时区，监控数据时间戳的唯一时区来源；部署后请勿变更，否则历史图表时间轴会偏移（启动日志会告警） |
 | `SERVER_PORT` | 80 | 服务监听端口 |
-| `ADMIN_USERNAME` | admin | 管理员用户名 |
-| `ADMIN_PASSWORD` | admin123 | 管理员密码 |
-| `JWT_SECRET` | - | JWT 签名密钥 |
+| `ADMIN_USERNAME` | admin | 管理员用户名，仅可通过 docker-compose.yml 配置（无网页修改功能），修改后需重建容器 |
+| `ADMIN_PASSWORD` | -（必填） | 管理员密码，未配置则拒绝启动；仅可通过 docker-compose.yml 配置，支持明文或 bcrypt 哈希（`$2a$` 前缀，compose 中 `$` 需写成 `$$`） |
+| `JWT_SECRET` | -（建议配置） | JWT 签名密钥，未配置时每次启动随机生成（重启后需重新登录） |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | 120 | Access Token 有效期（分钟） |
 | `REFRESH_TOKEN_EXPIRE_DAYS` | 7 | Refresh Token 有效期（天） |
 | `MAX_LOGIN_ATTEMPTS` | 5 | 最大登录失败次数 |
 | `LOGIN_LOCK_MINUTES` | 15 | 登录锁定时间（分钟） |
+| `TRUSTED_PROXIES` | -（默认不信任） | 可信反向代理 IP/CIDR（逗号分隔）；不配置时忽略 X-Forwarded-For 等代理头，防止伪造来源 IP 绕过登录锁定 |
+| `METRICS_RETENTION_DAYS` | 30 | 原始秒级数据保留天数，超期数据自动压缩为分钟级聚合数据（历史图表仍可查看） |
 
 ### Docker Compose 挂载说明
 
@@ -193,14 +196,17 @@ volumes:
 
 ## API 接口
 
-### 认证相关
+> 除 `/api/login`、`/api/refresh`、`/api/health`、`/api/ws` 外，其余接口均需在请求头携带 `Authorization: Bearer <access_token>`。
+
+### 认证与系统
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/api/login` | 用户登录 |
+| POST | `/api/login` | 用户登录（公开） |
 | POST | `/api/logout` | 用户登出 |
-| POST | `/api/refresh` | 刷新 Token |
+| POST | `/api/refresh` | 刷新 Token（公开） |
 | GET | `/api/verify` | 验证 Token |
+| GET | `/api/health` | 健康检查（公开，供 Docker healthcheck 使用） |
 
 ### 监控数据
 
@@ -208,33 +214,45 @@ volumes:
 |------|------|------|
 | GET | `/api/metrics` | 获取实时监控数据 |
 | GET | `/api/docker` | 获取 Docker 信息 |
-| GET | `/api/ws` | WebSocket 实时推送 |
+| GET | `/api/ws` | WebSocket 实时推送（Token 通过 `Sec-WebSocket-Protocol` 子协议传递，兼容 `?token=` 查询参数） |
 
-### 历史数据
+### 历史数据与统计
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/api/history/cpu` | CPU 历史数据 |
+| GET | `/api/history/cpu` | CPU 历史数据（`start`/`end` 查询参数，自动采样） |
 | GET | `/api/history/memory` | 内存历史数据 |
 | GET | `/api/history/disk` | 磁盘历史数据 |
 | GET | `/api/history/network` | 网络历史数据 |
+| GET | `/api/stats/database` | 数据库统计（总记录数、数据大小） |
+| GET | `/api/stats/timerange` | 数据时间范围（最早/最晚时间戳） |
 
 ### Docker 操作
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/api/docker/container/stop` | 停止容器 |
+| POST | `/api/docker/container/stop` | 停止容器（body: `{"container_id": "..."}`，ID 须为 12~64 位十六进制） |
 | POST | `/api/docker/container/restart` | 重启容器 |
 | POST | `/api/docker/container/delete` | 删除容器 |
 
-### 远程主机
+### 远程主机管理
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/api/remote/hosts` | 获取主机列表 |
-| POST | `/api/remote/hosts` | 添加主机 |
-| PUT | `/api/remote/hosts/:id` | 更新主机 |
+| GET | `/api/remote/hosts` | 获取主机列表（不返回密码） |
+| POST | `/api/remote/hosts` | 添加主机（密码 AES-256-GCM 加密存储） |
+| PUT | `/api/remote/hosts/:id` | 更新主机（密码留空则保留原密码） |
 | DELETE | `/api/remote/hosts/:id` | 删除主机 |
+| GET | `/api/remote/hosts/:id/status` | 检查单台主机在线状态（含凭据有效性校验） |
+| GET | `/api/remote/hosts/status/all` | 并发检查所有主机状态 |
+
+### 远程数据代理
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/remote/:host_id/metrics` | 代理获取远程主机实时监控数据 |
+| GET | `/api/remote/:host_id/docker` | 代理获取远程主机 Docker 信息 |
+| GET | `/api/remote/:host_id/history/{cpu,memory,disk,network}` | 代理获取远程主机历史数据 |
 
 ## 常见问题
 
