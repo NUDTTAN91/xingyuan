@@ -9,10 +9,15 @@
 package auth
 
 import (
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -56,6 +61,11 @@ type AuthManager struct {
 	maxLoginAttempts   int
 	lockDuration       time.Duration
 	
+	// 管理员凭据（启动时从环境变量一次性加载，运行期不可变更，
+	// 有且只能通过 docker-compose.yml 修改后重建容器生效）
+	adminUsername string
+	adminPassword string
+	
 	// 登录失败记录（IP -> 尝试记录）
 	loginAttempts map[string]*LoginAttempt
 	attemptsMu    sync.RWMutex
@@ -67,10 +77,38 @@ type AuthManager struct {
 
 // NewAuthManager 创建认证管理器
 func NewAuthManager() *AuthManager {
+	// 管理员凭据启动时一次性加载（唯一配置入口为 docker-compose.yml 的环境变量），
+	// 必须显式配置密码，禁止使用内置默认值
+	adminUser := os.Getenv("ADMIN_USERNAME")
+	if adminUser == "" {
+		adminUser = "admin"
+	}
+	adminPass := os.Getenv("ADMIN_PASSWORD")
+	if adminPass == "" {
+		log.Fatalf("安全检查失败: 未配置 ADMIN_PASSWORD 环境变量，拒绝启动。" +
+			"请在 docker-compose.yml 或环境变量中设置强密码后重试")
+	}
+	// 常见弱密码警告（不阻止启动，避免影响存量部署）
+	weakPasswords := []string{"admin", "admin123", "root", "123456", "12345678", "password"}
+	for _, weak := range weakPasswords {
+		if adminPass == weak {
+			log.Printf("【安全警告】ADMIN_PASSWORD 当前为常见弱密码 %q，强烈建议修改为强密码！", weak)
+			break
+		}
+	}
+
 	// 从环境变量读取配置
 	jwtSecret := os.Getenv("JWT_SECRET")
-	if jwtSecret == "" {
-		jwtSecret = "xingyuan-default-secret-please-change-in-production"
+	if jwtSecret == "" || jwtSecret == "xingyuan-default-secret-please-change-in-production" ||
+		jwtSecret == "xingyuan-secret-key-please-change-this-in-production" {
+		// 未配置或仍为示例值：随机生成密钥（重启后所有Token失效，需重新登录）
+		randomKey := make([]byte, 32)
+		if _, err := rand.Read(randomKey); err != nil {
+			log.Fatalf("生成随机 JWT 密钥失败: %v", err)
+		}
+		jwtSecret = hex.EncodeToString(randomKey)
+		log.Printf("【安全警告】JWT_SECRET 未配置或仍为示例值，已使用随机密钥（重启后需重新登录）。" +
+			"建议在环境变量中配置固定的强密钥")
 	}
 	
 	accessExpireMin, _ := strconv.Atoi(os.Getenv("ACCESS_TOKEN_EXPIRE_MINUTES"))
@@ -99,6 +137,8 @@ func NewAuthManager() *AuthManager {
 		refreshTokenExpire: time.Duration(refreshExpireDays) * 24 * time.Hour,
 		maxLoginAttempts:   maxAttempts,
 		lockDuration:       time.Duration(lockMinutes) * time.Minute,
+		adminUsername:      adminUser,
+		adminPassword:      adminPass,
 		loginAttempts:      make(map[string]*LoginAttempt),
 		tokenBlacklist:     make(map[string]time.Time),
 	}
@@ -116,16 +156,9 @@ func (am *AuthManager) Authenticate(username, password, clientIP string) error {
 		return ErrTooManyAttempts
 	}
 	
-	// 从环境变量获取管理员账号
-	adminUser := os.Getenv("ADMIN_USERNAME")
-	adminPass := os.Getenv("ADMIN_PASSWORD")
-	
-	if adminUser == "" {
-		adminUser = "admin"
-	}
-	if adminPass == "" {
-		adminPass = "admin123"
-	}
+	// 使用启动时加载的管理员凭据（运行期不可变更）
+	adminUser := am.adminUsername
+	adminPass := am.adminPassword
 	
 	// 验证用户名
 	if username != adminUser {
@@ -133,11 +166,15 @@ func (am *AuthManager) Authenticate(username, password, clientIP string) error {
 		return ErrInvalidCredentials
 	}
 	
-	// 验证密码（支持明文和bcrypt两种方式）
-	err := bcrypt.CompareHashAndPassword([]byte(adminPass), []byte(password))
-	if err != nil {
-		// 如果bcrypt验证失败，尝试明文比较（兼容性）
-		if password != adminPass {
+	// 验证密码：配置为bcrypt哈希（$2a$/$2b$/$2y$前缀）时只走bcrypt校验，
+	// 否则按明文恒定时间比较（避免输入哈希串本身即可登录的漏洞）
+	if strings.HasPrefix(adminPass, "$2a$") || strings.HasPrefix(adminPass, "$2b$") || strings.HasPrefix(adminPass, "$2y$") {
+		if err := bcrypt.CompareHashAndPassword([]byte(adminPass), []byte(password)); err != nil {
+			am.recordFailedAttempt(clientIP)
+			return ErrInvalidCredentials
+		}
+	} else {
+		if subtle.ConstantTimeCompare([]byte(password), []byte(adminPass)) != 1 {
 			am.recordFailedAttempt(clientIP)
 			return ErrInvalidCredentials
 		}
@@ -280,6 +317,10 @@ func (am *AuthManager) isLocked(clientIP string) bool {
 	return time.Now().Before(attempt.LockedUntil)
 }
 
+// maxLoginAttemptEntries 登录失败记录的容量上限
+// 防止攻击者伪造海量来源IP撑爆内存
+const maxLoginAttemptEntries = 10000
+
 // recordFailedAttempt 记录失败的登录尝试
 func (am *AuthManager) recordFailedAttempt(clientIP string) {
 	am.attemptsMu.Lock()
@@ -289,6 +330,13 @@ func (am *AuthManager) recordFailedAttempt(clientIP string) {
 	attempt, exists := am.loginAttempts[clientIP]
 	
 	if !exists {
+		// 达到容量上限时先清理过期条目；仍满则放弃记录（不影响正常校验）
+		if len(am.loginAttempts) >= maxLoginAttemptEntries {
+			am.pruneExpiredAttemptsLocked(now)
+			if len(am.loginAttempts) >= maxLoginAttemptEntries {
+				return
+			}
+		}
 		attempt = &LoginAttempt{}
 		am.loginAttempts[clientIP] = attempt
 	}
@@ -299,6 +347,15 @@ func (am *AuthManager) recordFailedAttempt(clientIP string) {
 	// 如果超过最大尝试次数，锁定账户
 	if attempt.Count >= am.maxLoginAttempts {
 		attempt.LockedUntil = now.Add(am.lockDuration)
+	}
+}
+
+// pruneExpiredAttemptsLocked 清理已过锁定期且1小时无活动的记录（调用方需持有attemptsMu写锁）
+func (am *AuthManager) pruneExpiredAttemptsLocked(now time.Time) {
+	for ip, attempt := range am.loginAttempts {
+		if now.After(attempt.LockedUntil) && now.Sub(attempt.LastAttempt) > time.Hour {
+			delete(am.loginAttempts, ip)
+		}
 	}
 }
 

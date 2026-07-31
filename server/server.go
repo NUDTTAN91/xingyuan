@@ -9,11 +9,16 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
+	"os"
+	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 	"xingyuan-monitor/auth"
 	"xingyuan-monitor/collector"
@@ -24,15 +29,28 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// saveTask 待落库的一次采集数据
+type saveTask struct {
+	metrics  *collector.SystemMetrics
+	baseline collector.NetworkBaseline
+}
+
 // Server Web服务器
 type Server struct {
 	collector     *collector.Collector
 	authManager   *auth.AuthManager
 	remoteManager *remote.Manager
 	router        *gin.Engine
-	wsClients     map[*websocket.Conn]bool
-	wsMutex       sync.Mutex
-	upgrader      websocket.Upgrader
+	// WS客户端 -> 每连接发送队列（网络写在独立协程中完成，慢客户端不拖累广播）
+	wsClients map[*websocket.Conn]chan *collector.SystemMetrics
+	wsMutex   sync.Mutex
+	upgrader  websocket.Upgrader
+	// 最新一次采集的指标缓存（由广播协程每秒更新）
+	// /api/metrics 直接读缓存，避免每个请求都重复采集（CPU采样需阻塞100ms）
+	latestMetrics *collector.SystemMetrics
+	metricsMutex  sync.RWMutex
+	// 落库有界队列：由单个常驻写协程消费，避免SQLite阻塞时goroutine无界堆积
+	saveQueue chan saveTask
 }
 
 // NewServer 创建服务器实例
@@ -47,12 +65,38 @@ func NewServer() *Server {
 		authManager:   auth.NewAuthManager(),
 		remoteManager: remote.NewManager(db),
 		router:        gin.Default(),
-		wsClients:     make(map[*websocket.Conn]bool),
+		wsClients:     make(map[*websocket.Conn]chan *collector.SystemMetrics),
+		// 队列容量60（约1分钟数据）：SQLite长时间阻塞时丢弃新数据而非无界堆积
+		saveQueue: make(chan saveTask, 60),
 		upgrader: websocket.Upgrader{
+			// 同源校验：拒绝其他网站页面发起的跨源WS连接
 			CheckOrigin: func(r *http.Request) bool {
-				return true
+				origin := r.Header.Get("Origin")
+				if origin == "" {
+					// 非浏览器客户端（无Origin头）放行，仍需通过Token验证
+					return true
+				}
+				u, err := url.Parse(origin)
+				if err != nil {
+					return false
+				}
+				return u.Host == r.Host
 			},
 		},
+	}
+
+	// 可信代理配置：默认不信任任何代理头，防止伪造 X-Forwarded-For 绕过登录锁定
+	// 部署在反向代理后时通过 TRUSTED_PROXIES 环境变量指定代理IP/CIDR（逗号分隔）
+	var trustedProxies []string
+	if v := os.Getenv("TRUSTED_PROXIES"); v != "" {
+		for _, p := range strings.Split(v, ",") {
+			if p = strings.TrimSpace(p); p != "" {
+				trustedProxies = append(trustedProxies, p)
+			}
+		}
+	}
+	if err := s.router.SetTrustedProxies(trustedProxies); err != nil {
+		log.Printf("设置可信代理失败: %v", err)
 	}
 
 	// 加载网络流量基准值（用于系统重启后恢复）
@@ -74,12 +118,17 @@ func NewServer() *Server {
 
 // setupRoutes 设置路由
 func (s *Server) setupRoutes() {
-	// 静态文件服务 - 禁用缓存
+	// 静态资源缓存策略：第三方库长缓存，业务资源协商缓存（依赖304）
 	s.router.Use(func(c *gin.Context) {
-		if c.Request.URL.Path == "/static/js/history-chart.js" {
-			c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
-			c.Header("Pragma", "no-cache")
-			c.Header("Expires", "0")
+		p := c.Request.URL.Path
+		if strings.HasPrefix(p, "/static/") {
+			if strings.HasSuffix(p, "/chart.umd.min.js") {
+				// Chart.js 等第三方库几乎不变，缓存7天
+				c.Header("Cache-Control", "public, max-age=604800")
+			} else {
+				// 业务JS/CSS/HTML：每次协商验证（文件未变时返回304，不重复传输）
+				c.Header("Cache-Control", "no-cache")
+			}
 		}
 		c.Next()
 	})
@@ -95,6 +144,8 @@ func (s *Server) setupRoutes() {
 		public.POST("/refresh", s.handleRefresh)
 		// WebSocket 路由（在 handler 中手动验证 Token）
 		public.GET("/ws", s.handleWebSocket)
+		// 健康检查（供 Docker healthcheck 使用，不暴露任何监控数据）
+		public.GET("/health", s.handleHealth)
 	}
 	
 	// 受保护的API接口（需要认证）
@@ -144,12 +195,22 @@ func (s *Server) handleIndex(c *gin.Context) {
 	c.File("./static/index.html")
 }
 
+// handleHealth 健康检查（无需认证，仅返回服务存活状态）
+func (s *Server) handleHealth(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+
 // handleMetrics 获取监控数据
+// 直接返回广播协程每秒更新的缓存，避免重复采集与并发竞争
 func (s *Server) handleMetrics(c *gin.Context) {
-	metrics, err := s.collector.Collect()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": err.Error(),
+	s.metricsMutex.RLock()
+	metrics := s.latestMetrics
+	s.metricsMutex.RUnlock()
+
+	if metrics == nil {
+		// 服务刚启动、首次采集尚未完成（最多1秒窗口）
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "监控数据尚未就绪，请稍后重试",
 		})
 		return
 	}
@@ -174,8 +235,24 @@ func (s *Server) handleDocker(c *gin.Context) {
 
 // handleWebSocket WebSocket连接处理
 func (s *Server) handleWebSocket(c *gin.Context) {
-	// 从查询参数中获取 Token（WebSocket 不支持请求头）
-	token := c.Request.URL.Query().Get("token")
+	// 优先从 Sec-WebSocket-Protocol 子协议中获取 Token（不进访问日志，比URL参数安全）
+	// 前端格式: new WebSocket(url, ["xingyuan-auth", token])
+	var token string
+	usedSubprotocol := false
+	if protoHeader := c.GetHeader("Sec-WebSocket-Protocol"); protoHeader != "" {
+		for _, p := range strings.Split(protoHeader, ",") {
+			p = strings.TrimSpace(p)
+			if p != "" && p != "xingyuan-auth" {
+				token = p
+				usedSubprotocol = true
+				break
+			}
+		}
+	}
+	// 兼容旧客户端：从查询参数获取 Token
+	if token == "" {
+		token = c.Request.URL.Query().Get("token")
+	}
 	if token == "" {
 		// 如果没有 token，从 Header 中获取（兼容性）
 		authHeader := c.GetHeader("Authorization")
@@ -203,20 +280,32 @@ func (s *Server) handleWebSocket(c *gin.Context) {
 	
 	log.Printf("WebSocket 连接成功，用户: %s, IP: %s", claims.Username, c.ClientIP())
 	
-	conn, err := s.upgrader.Upgrade(c.Writer, c.Request, nil)
+	// 若客户端通过子协议传递Token，握手响应需回选一个客户端提供的子协议
+	var responseHeader http.Header
+	if usedSubprotocol {
+		responseHeader = http.Header{"Sec-WebSocket-Protocol": {"xingyuan-auth"}}
+	}
+	
+	conn, err := s.upgrader.Upgrade(c.Writer, c.Request, responseHeader)
 	if err != nil {
 		log.Printf("WebSocket upgrade error: %v", err)
 		return
 	}
 
+	// 每连接独立发送队列 + 写协程：网络写不在广播循环中进行
+	sendCh := make(chan *collector.SystemMetrics, 4)
 	s.wsMutex.Lock()
-	s.wsClients[conn] = true
+	s.wsClients[conn] = sendCh
 	s.wsMutex.Unlock()
+
+	go s.wsWriter(conn, sendCh)
 
 	defer func() {
 		s.wsMutex.Lock()
 		delete(s.wsClients, conn)
 		s.wsMutex.Unlock()
+		// 从map移除后广播协程不会再向该channel发送，可安全关闭以退出写协程
+		close(sendCh)
 		conn.Close()
 	}()
 
@@ -228,85 +317,132 @@ func (s *Server) handleWebSocket(c *gin.Context) {
 	}
 }
 
+// wsWriter 单个WS连接的发送协程：带写超时，慢客户端只影响自己
+func (s *Server) wsWriter(conn *websocket.Conn, sendCh chan *collector.SystemMetrics) {
+	for metrics := range sendCh {
+		conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+		if err := conn.WriteJSON(metrics); err != nil {
+			log.Printf("WebSocket write error: %v", err)
+			// 关闭连接使读循环退出，触发注销清理
+			conn.Close()
+			return
+		}
+	}
+}
+
 // BroadcastMetrics 广播监控数据到所有WebSocket客户端
 func (s *Server) BroadcastMetrics() {
+	// 启动时立即采集一次，让缓存尽快就绪
+	s.collectAndBroadcast()
+
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
 	for range ticker.C {
-		metrics, err := s.collector.Collect()
-		if err != nil {
-			log.Printf("Collect metrics error: %v", err)
-			continue
-		}
-
-		// 获取数据库统计信息（实时更新）
-		dbStats, err := database.GetDatabaseStats()
-		if err != nil {
-			log.Printf("Get database stats error: %v", err)
-			// 如果获取失败，设置默认值
-			metrics.DatabaseInfo = collector.DatabaseInfo{
-				TotalRecords: 0,
-				DataSize:     0,
-			}
-		} else {
-			metrics.DatabaseInfo = collector.DatabaseInfo{
-				TotalRecords: dbStats.TotalRecords,
-				DataSize:     dbStats.DataSize,
-			}
-		}
-
-		// 将监控数据存入数据库
-		go s.saveMetricsToDatabase(metrics)
-
-		s.wsMutex.Lock()
-		for conn := range s.wsClients {
-			if err := conn.WriteJSON(metrics); err != nil {
-				log.Printf("WebSocket write error: %v", err)
-				conn.Close()
-				delete(s.wsClients, conn)
-			}
-		}
-		s.wsMutex.Unlock()
+		s.collectAndBroadcast()
 	}
 }
 
-// saveMetricsToDatabase 将监控数据保存到数据库
-func (s *Server) saveMetricsToDatabase(metrics *collector.SystemMetrics) {
+// collectAndBroadcast 采集一次指标：更新缓存、异步落库并广播给WS客户端
+func (s *Server) collectAndBroadcast() {
+	metrics, err := s.collector.Collect()
+	if err != nil {
+		log.Printf("Collect metrics error: %v", err)
+		return
+	}
+
+	// 获取数据库统计信息（实时更新）
+	dbStats, err := database.GetDatabaseStats()
+	if err != nil {
+		log.Printf("Get database stats error: %v", err)
+		// 如果获取失败，设置默认值
+		metrics.DatabaseInfo = collector.DatabaseInfo{
+			TotalRecords: 0,
+			DataSize:     0,
+		}
+	} else {
+		metrics.DatabaseInfo = collector.DatabaseInfo{
+			TotalRecords: dbStats.TotalRecords,
+			DataSize:     dbStats.DataSize,
+		}
+	}
+
+	// 更新指标缓存（供 /api/metrics 直接读取）
+	s.metricsMutex.Lock()
+	s.latestMetrics = metrics
+	s.metricsMutex.Unlock()
+
+	// 将监控数据交给常驻写协程落库（队列满则丢弃本秒数据，避免goroutine堆积）
+	// 基准值在采集协程内先取快照，避免落库协程与下一次采集并发读写
+	baseline := *s.collector.GetBaseline()
+	select {
+	case s.saveQueue <- saveTask{metrics: metrics, baseline: baseline}:
+	default:
+		log.Printf("落库队列已满，丢弃本次监控数据（数据库可能繁忙）")
+	}
+
+	// 广播：仅做非阻塞投递到各连接的发送队列，网络写由各自的写协程完成
+	s.wsMutex.Lock()
+	for _, sendCh := range s.wsClients {
+		select {
+		case sendCh <- metrics:
+		default:
+			// 慢客户端队列已满：丢弃本次数据，不拖累其他客户端
+		}
+	}
+	s.wsMutex.Unlock()
+}
+
+// saveWorker 常驻落库协程：串行消费队列，与SQLite单连接模型匹配
+func (s *Server) saveWorker() {
+	for task := range s.saveQueue {
+		s.saveMetricsToDatabase(task.metrics, task.baseline)
+	}
+}
+
+// saveMetricsToDatabase 将监控数据保存到数据库（采集失败的子项跳过，避免写入假零值）
+func (s *Server) saveMetricsToDatabase(metrics *collector.SystemMetrics, baseline collector.NetworkBaseline) {
 	// 保存CPU数据
-	if err := database.InsertCPUMetrics(metrics.CPU.UsagePercent); err != nil {
-		log.Printf("保存CPU数据失败: %v", err)
+	if !metrics.CollectFailed("cpu") {
+		if err := database.InsertCPUMetrics(metrics.CPU.UsagePercent); err != nil {
+			log.Printf("保存CPU数据失败: %v", err)
+		}
 	}
 
 	// 保存内存数据
-	if err := database.InsertMemoryMetrics(metrics.Memory.Used, metrics.Memory.Total, metrics.Memory.UsagePercent); err != nil {
-		log.Printf("保存内存数据失败: %v", err)
+	if !metrics.CollectFailed("memory") {
+		if err := database.InsertMemoryMetrics(metrics.Memory.Used, metrics.Memory.Total, metrics.Memory.UsagePercent); err != nil {
+			log.Printf("保存内存数据失败: %v", err)
+		}
 	}
 
 	// 保存磁盘数据
-	if err := database.InsertDiskMetrics(
-		metrics.Disk.Used,
-		metrics.Disk.Free,
-		metrics.Disk.Total,
-		metrics.Disk.UsagePercent,
-		metrics.Disk.ReadSpeed,
-		metrics.Disk.WriteSpeed,
-	); err != nil {
-		log.Printf("保存磁盘数据失败: %v", err)
+	if !metrics.CollectFailed("disk") {
+		if err := database.InsertDiskMetrics(
+			metrics.Disk.Used,
+			metrics.Disk.Free,
+			metrics.Disk.Total,
+			metrics.Disk.UsagePercent,
+			metrics.Disk.ReadSpeed,
+			metrics.Disk.WriteSpeed,
+		); err != nil {
+			log.Printf("保存磁盘数据失败: %v", err)
+		}
 	}
 
 	// 保存网络数据（包括速度和累计流量）
-	if err := database.InsertNetworkMetrics(
-		metrics.Network.UploadSpeed, 
-		metrics.Network.DownloadSpeed,
-		metrics.Network.BytesSent,
-		metrics.Network.BytesRecv,
-	); err != nil {
-		log.Printf("保存网络数据失败: %v", err)
+	if !metrics.CollectFailed("network") {
+		if err := database.InsertNetworkMetrics(
+			metrics.Network.UploadSpeed, 
+			metrics.Network.DownloadSpeed,
+			metrics.Network.BytesSent,
+			metrics.Network.BytesRecv,
+		); err != nil {
+			log.Printf("保存网络数据失败: %v", err)
+		}
 	}
 
 	// 每秒保存网络基准值（用于系统重启后恢复）
-	baseline := s.collector.GetBaseline()
 	dbBaseline := &database.NetworkBaseline{
 		ID:                1,
 		BytesRecvBaseline: baseline.BytesRecvBaseline,
@@ -319,15 +455,42 @@ func (s *Server) saveMetricsToDatabase(metrics *collector.SystemMetrics) {
 	}
 }
 
-// Run 启动服务器
+// Run 启动服务器（支持优雅停机：收到SIGINT/SIGTERM后停止接收新请求并等待处理完成）
 func (s *Server) Run(addr string) error {
+	// 启动常驻落库协程
+	go s.saveWorker()
 	// 启动WebSocket广播
 	go s.BroadcastMetrics()
 
 	log.Printf("星垣启动成功，访问地址: http://%s", addr)
 	log.Printf("Author: tan91 | GitHub: https://github.com/NUDTTAN91")
-	
-	return s.router.Run(addr)
+
+	httpServer := &http.Server{
+		Addr:    addr,
+		Handler: s.router,
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- httpServer.ListenAndServe()
+	}()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+
+	select {
+	case err := <-errCh:
+		return err
+	case sig := <-quit:
+		log.Printf("收到信号 %v，开始优雅停机...", sig)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := httpServer.Shutdown(ctx); err != nil {
+			log.Printf("HTTP服务停机异常: %v", err)
+		}
+		log.Printf("服务已停止")
+		return nil
+	}
 }
 
 // handleHistoryCPU 获取CPU历史数据
@@ -440,6 +603,20 @@ func (s *Server) handleDataTimeRange(c *gin.Context) {
 	c.JSON(http.StatusOK, timeRange)
 }
 
+// isValidContainerID 校验容器ID格式（12~64位十六进制字符）
+// 防止向 docker CLI 传入任意形态的参数字符串
+func isValidContainerID(id string) bool {
+	if len(id) < 12 || len(id) > 64 {
+		return false
+	}
+	for _, ch := range id {
+		if !((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
 // handleStopContainer 停止容器
 func (s *Server) handleStopContainer(c *gin.Context) {
 	var req struct {
@@ -454,10 +631,10 @@ func (s *Server) handleStopContainer(c *gin.Context) {
 		return
 	}
 	
-	if req.ContainerID == "" {
+	if !isValidContainerID(req.ContainerID) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
-			"error":   "container_id 不能为空",
+			"error":   "无效的容器ID",
 		})
 		return
 	}
@@ -490,10 +667,10 @@ func (s *Server) handleDeleteContainer(c *gin.Context) {
 		return
 	}
 	
-	if req.ContainerID == "" {
+	if !isValidContainerID(req.ContainerID) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
-			"error":   "container_id 不能为空",
+			"error":   "无效的容器ID",
 		})
 		return
 	}
@@ -526,10 +703,10 @@ func (s *Server) handleRestartContainer(c *gin.Context) {
 		return
 	}
 	
-	if req.ContainerID == "" {
+	if !isValidContainerID(req.ContainerID) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
-			"error":   "container_id 不能为空",
+			"error":   "无效的容器ID",
 		})
 		return
 	}
@@ -651,7 +828,7 @@ func (s *Server) handleLogin(c *gin.Context) {
 
 // handleLogout 处理登出
 func (s *Server) handleLogout(c *gin.Context) {
-	// 获取 Token
+	// 撤销 Access Token
 	authHeader := c.GetHeader("Authorization")
 	if authHeader != "" {
 		parts := strings.SplitN(authHeader, " ", 2)
@@ -659,6 +836,16 @@ func (s *Server) handleLogout(c *gin.Context) {
 			tokenString := parts[1]
 			// 撤销 Token
 			s.authManager.RevokeToken(tokenString)
+		}
+	}
+	
+	// 同时撤销请求体中的 Refresh Token（否则登出后仍可用它换取新Token）
+	var req struct {
+		RefreshToken string `json:"refresh_token"`
+	}
+	if err := c.ShouldBindJSON(&req); err == nil && req.RefreshToken != "" {
+		if err := s.authManager.RevokeToken(req.RefreshToken); err != nil {
+			log.Printf("撤销 Refresh Token 失败: %v", err)
 		}
 	}
 	

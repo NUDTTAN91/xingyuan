@@ -9,6 +9,7 @@
 package collector
 
 import (
+	"log"
 	"time"
 
 	"github.com/shirou/gopsutil/v3/disk"
@@ -67,45 +68,56 @@ func (c *Collector) GetBaseline() *NetworkBaseline {
 }
 
 // Collect 采集所有监控数据
+// 子采集失败时记录日志并标记到 FailedParts，返回部分数据（失败项为零值）
 func (c *Collector) Collect() (*SystemMetrics, error) {
 	metrics := &SystemMetrics{
 		Timestamp: time.Now().Unix(),
 	}
 
 	// 采集CPU数据
-	cpuMetrics, err := c.collectCPU()
-	if err == nil {
+	if cpuMetrics, err := c.collectCPU(); err == nil {
 		metrics.CPU = *cpuMetrics
+	} else {
+		metrics.FailedParts = append(metrics.FailedParts, "cpu")
+		log.Printf("采集CPU数据失败: %v", err)
 	}
 
 	// 采集内存数据
-	memMetrics, err := c.collectMemory()
-	if err == nil {
+	if memMetrics, err := c.collectMemory(); err == nil {
 		metrics.Memory = *memMetrics
+	} else {
+		metrics.FailedParts = append(metrics.FailedParts, "memory")
+		log.Printf("采集内存数据失败: %v", err)
 	}
 
 	// 采集磁盘数据
-	diskMetrics, err := c.collectDisk()
-	if err == nil {
+	if diskMetrics, err := c.collectDisk(); err == nil {
 		metrics.Disk = *diskMetrics
+	} else {
+		metrics.FailedParts = append(metrics.FailedParts, "disk")
+		log.Printf("采集磁盘数据失败: %v", err)
 	}
 
 	// 采集网络数据
-	netMetrics, err := c.collectNetwork()
-	if err == nil {
+	if netMetrics, err := c.collectNetwork(); err == nil {
 		metrics.Network = *netMetrics
+	} else {
+		metrics.FailedParts = append(metrics.FailedParts, "network")
+		log.Printf("采集网络数据失败: %v", err)
 	}
 
 	// 采集进程数据
-	processes, err := c.collectProcesses(10)
-	if err == nil {
+	if processes, err := c.collectProcesses(10); err == nil {
 		metrics.Processes = processes
+	} else {
+		log.Printf("采集进程数据失败: %v", err)
 	}
 
 	// 采集系统信息
-	sysInfo, err := c.collectSystemInfo()
-	if err == nil {
+	if sysInfo, err := c.collectSystemInfo(); err == nil {
 		metrics.SystemInfo = *sysInfo
+	} else {
+		log.Printf("采集系统信息失败: %v", err)
 	}
 
 	return metrics, nil

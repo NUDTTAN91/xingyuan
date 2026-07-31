@@ -8,7 +8,11 @@
 
 package collector
 
-import "github.com/shirou/gopsutil/v3/process"
+import (
+	"sort"
+
+	"github.com/shirou/gopsutil/v3/process"
+)
 
 // collectProcesses 采集进程信息
 func (c *Collector) collectProcesses(topN int) ([]ProcessInfo, error) {
@@ -43,16 +47,11 @@ func (c *Collector) collectProcesses(topN int) ([]ProcessInfo, error) {
 		procList = append(procList, procInfo)
 	}
 
-	// 按CPU使用率排序，取前N个
+	// 按CPU使用率降序排序，取前N个
+	sort.Slice(procList, func(i, j int) bool {
+		return procList[i].CPUPercent > procList[j].CPUPercent
+	})
 	if len(procList) > topN {
-		// 简单排序：冒泡排序
-		for i := 0; i < topN; i++ {
-			for j := i + 1; j < len(procList); j++ {
-				if procList[j].CPUPercent > procList[i].CPUPercent {
-					procList[i], procList[j] = procList[j], procList[i]
-				}
-			}
-		}
 		procList = procList[:topN]
 	}
 

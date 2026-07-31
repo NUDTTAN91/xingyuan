@@ -16,12 +16,12 @@ function connectWebSocket() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const token = getAccessToken(); // 从 auth.js 获取 Token
     
-    // WebSocket 不支持设置请求头，需要在 URL 中传递 Token
-    const wsUrl = token 
-        ? `${protocol}//${window.location.host}/api/ws?token=${encodeURIComponent(token)}`
-        : `${protocol}//${window.location.host}/api/ws`;
+    // Token 通过 Sec-WebSocket-Protocol 子协议传递（避免出现在URL和访问日志中）
+    const wsUrl = `${protocol}//${window.location.host}/api/ws`;
     
-    ws = new WebSocket(wsUrl);
+    ws = token
+        ? new WebSocket(wsUrl, ['xingyuan-auth', token])
+        : new WebSocket(wsUrl);
 
     ws.onopen = function() {
         console.log('WebSocket connected');

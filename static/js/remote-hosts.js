@@ -9,6 +9,7 @@ let currentHostId = null;  // 当前选中的主机 ID
 let currentTab = 'metrics'; // 当前选中的 Tab
 let refreshInterval = null; // 自动刷新定时器
 let statusCheckInterval = null; // 状态检查定时器
+let metricsRefreshInterval = null; // 缩略图监控数据刷新定时器
 let hostMetricsCache = {}; // 主机监控数据缓存
 
 // ==================== 页面初始化 ====================
@@ -20,13 +21,12 @@ window.addEventListener('load', () => {
     loadHostList();
     
     // 启动状态检查定时器（每 10 秒检查一次）
-    statusCheckInterval = setInterval(() => {
-        checkAllHostsStatus();
-        updateAllHostsMetrics();
-    }, 10000);
+    statusCheckInterval = setInterval(checkAllHostsStatus, 10000);
     
-    // 启动缩略图监控数据实时更新定时器（每 1 秒更新一次）
-    setInterval(updateAllHostsMetrics, 1000);
+    // 缩略图监控数据刷新（每 5 秒一次：每次会对所有主机各发一个代理请求，
+    // 频率过高会对本机和所有远程主机造成请求风暴）
+    metricsRefreshInterval = setInterval(updateAllHostsMetrics, 5000);
+    updateAllHostsMetrics();
     
     // 更新统计数据
     updateStats();
@@ -35,6 +35,13 @@ window.addEventListener('load', () => {
     setInterval(() => {
         document.getElementById('update-time').textContent = new Date().toLocaleTimeString('zh-CN');
     }, 1000);
+});
+
+// 页面关闭时清理所有定时器
+window.addEventListener('beforeunload', () => {
+    if (statusCheckInterval) clearInterval(statusCheckInterval);
+    if (metricsRefreshInterval) clearInterval(metricsRefreshInterval);
+    if (refreshInterval) clearInterval(refreshInterval);
 });
 
 // ==================== 主机列表管理 ====================
@@ -326,9 +333,14 @@ function updateHostStatus(hostId, status) {
     
     if (status.online) {
         statusDot.className = 'host-status online';
-        // 使用当前时间作为最后更新时间
-        const lastCheckTime = formatDateTime(new Date());
-        infoText.textContent = `最后更新: ${lastCheckTime}`;
+        if (status.error) {
+            // 在线但认证失败（用户名或密码错误）
+            infoText.textContent = status.error;
+        } else {
+            // 使用当前时间作为最后更新时间
+            const lastCheckTime = formatDateTime(new Date());
+            infoText.textContent = `最后更新: ${lastCheckTime}`;
+        }
     } else {
         statusDot.className = 'host-status offline';
         infoText.textContent = `离线 (${status.error || '无法连接'})`;

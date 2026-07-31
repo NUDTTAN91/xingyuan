@@ -87,8 +87,71 @@ func createTables() error {
 	CREATE INDEX IF NOT EXISTS idx_remote_hosts_enabled ON remote_hosts(enabled);
 	`
 
+	// CPU分钟级聚合表（超过保留期的原始数据压缩后存放于此）
+	cpuAggTable := `
+	CREATE TABLE IF NOT EXISTS cpu_metrics_agg (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		usage REAL NOT NULL,
+		timestamp TEXT NOT NULL
+	);
+	CREATE INDEX IF NOT EXISTS idx_cpu_agg_timestamp ON cpu_metrics_agg(timestamp);
+	`
+
+	// 内存分钟级聚合表
+	memoryAggTable := `
+	CREATE TABLE IF NOT EXISTS memory_metrics_agg (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		used BIGINT NOT NULL,
+		total BIGINT NOT NULL,
+		usage REAL NOT NULL,
+		timestamp TEXT NOT NULL
+	);
+	CREATE INDEX IF NOT EXISTS idx_memory_agg_timestamp ON memory_metrics_agg(timestamp);
+	`
+
+	// 磁盘分钟级聚合表
+	diskAggTable := `
+	CREATE TABLE IF NOT EXISTS disk_metrics_agg (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		used BIGINT NOT NULL,
+		free BIGINT NOT NULL,
+		total BIGINT NOT NULL,
+		usage REAL NOT NULL,
+		read_speed REAL NOT NULL,
+		write_speed REAL NOT NULL,
+		timestamp TEXT NOT NULL
+	);
+	CREATE INDEX IF NOT EXISTS idx_disk_agg_timestamp ON disk_metrics_agg(timestamp);
+	`
+
+	// 网络分钟级聚合表
+	networkAggTable := `
+	CREATE TABLE IF NOT EXISTS network_metrics_agg (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		upload_speed REAL NOT NULL,
+		download_speed REAL NOT NULL,
+		bytes_sent BIGINT NOT NULL,
+		bytes_recv BIGINT NOT NULL,
+		timestamp TEXT NOT NULL
+	);
+	CREATE INDEX IF NOT EXISTS idx_network_agg_timestamp ON network_metrics_agg(timestamp);
+	`
+
+	// 系统元数据表（记录建库时区等信息，用于启动时一致性检查）
+	systemMetaTable := `
+	CREATE TABLE IF NOT EXISTS system_meta (
+		key TEXT PRIMARY KEY,
+		value TEXT NOT NULL,
+		updated_at TEXT NOT NULL
+	);
+	`
+
 	// 执行建表语句
-	tables := []string{cpuTable, memoryTable, diskTable, networkTable, networkBaselineTable, remoteHostsTable}
+	tables := []string{
+		cpuTable, memoryTable, diskTable, networkTable, networkBaselineTable, remoteHostsTable,
+		cpuAggTable, memoryAggTable, diskAggTable, networkAggTable,
+		systemMetaTable,
+	}
 	for _, table := range tables {
 		if _, err := db.Exec(table); err != nil {
 			return fmt.Errorf("创建表失败: %v", err)

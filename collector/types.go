@@ -18,6 +18,19 @@ type SystemMetrics struct {
 	Processes    []ProcessInfo  `json:"processes"`
 	SystemInfo   SystemInfo     `json:"system_info"`
 	DatabaseInfo DatabaseInfo   `json:"database_info"` // 数据库统计信息
+	// FailedParts 本次采集失败的子项名称（cpu/memory/disk/network），
+	// 落库时跳过对应指标，避免把零值当真数据写入历史库
+	FailedParts []string `json:"-"`
+}
+
+// CollectFailed 判断指定子项本次采集是否失败
+func (m *SystemMetrics) CollectFailed(part string) bool {
+	for _, p := range m.FailedParts {
+		if p == part {
+			return true
+		}
+	}
+	return false
 }
 
 // CPUMetrics CPU指标

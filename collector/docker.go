@@ -100,8 +100,14 @@ func (c *Collector) collectDocker() (*DockerMetrics, error) {
 			runningCount++
 		}
 
+		// 容器ID只取前12位（防止短ID切片越界）
+		shortID := container.ID
+		if len(shortID) > 12 {
+			shortID = shortID[:12]
+		}
+
 		containerInfo := DockerContainerInfo{
-			ID:      container.ID[:12], // 只取前12位
+			ID:      shortID,
 			Image:   container.Image,
 			Name:    container.Names,
 			State:   container.State,

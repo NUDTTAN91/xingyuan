@@ -48,11 +48,18 @@ type Manager struct {
 	httpClient  *http.Client
 	tokenCache  map[int]*TokenCache // host_id -> token
 	cacheMutex  sync.RWMutex
+	encryptKey  []byte // 远程主机密码的AES-256-GCM加密密钥
 }
 
 // NewManager 创建远程主机管理器
 func NewManager(db *sql.DB) *Manager {
-	return &Manager{
+	// 加载/生成密码加密密钥（持久化在数据目录）
+	encryptKey, err := loadOrCreateEncryptKey("./data")
+	if err != nil {
+		log.Fatalf("初始化密码加密密钥失败: %v", err)
+	}
+
+	m := &Manager{
 		db: db,
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
@@ -61,7 +68,13 @@ func NewManager(db *sql.DB) *Manager {
 			},
 		},
 		tokenCache: make(map[int]*TokenCache),
+		encryptKey: encryptKey,
 	}
+
+	// 将存量明文密码一次性加密
+	m.migratePlaintextPasswords()
+
+	return m
 }
 
 // ==================== 数据库操作 ====================
@@ -131,12 +144,25 @@ func (m *Manager) GetHostByID(id int) (*RemoteHost, error) {
 	h.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
 	h.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
 
+	// 解密密码（存量明文数据原样返回）
+	password, err := m.decryptPassword(h.Password)
+	if err != nil {
+		return nil, fmt.Errorf("解密主机密码失败: %v", err)
+	}
+	h.Password = password
+
 	return &h, nil
 }
 
 // AddHost 添加主机
 func (m *Manager) AddHost(h *RemoteHost) error {
 	now := time.Now().Format("2006-01-02 15:04:05")
+
+	// 密码加密后入库
+	encrypted, err := m.encryptPassword(h.Password)
+	if err != nil {
+		return fmt.Errorf("加密密码失败: %v", err)
+	}
 
 	query := `
 		INSERT INTO remote_hosts (name, address, port, username, password, enabled, created_at, updated_at)
@@ -148,7 +174,7 @@ func (m *Manager) AddHost(h *RemoteHost) error {
 		enabled = 1
 	}
 
-	result, err := m.db.Exec(query, h.Name, h.Address, h.Port, h.Username, h.Password, enabled, now, now)
+	result, err := m.db.Exec(query, h.Name, h.Address, h.Port, h.Username, encrypted, enabled, now, now)
 	if err != nil {
 		return fmt.Errorf("添加主机失败: %v", err)
 	}
@@ -164,6 +190,22 @@ func (m *Manager) AddHost(h *RemoteHost) error {
 func (m *Manager) UpdateHost(h *RemoteHost) error {
 	now := time.Now().Format("2006-01-02 15:04:05")
 
+	// 密码加密后入库；若未提供新密码则保留原密码
+	var encrypted string
+	if h.Password == "" {
+		var stored string
+		if err := m.db.QueryRow("SELECT password FROM remote_hosts WHERE id = ?", h.ID).Scan(&stored); err != nil {
+			return fmt.Errorf("查询原密码失败: %v", err)
+		}
+		encrypted = stored
+	} else {
+		var err error
+		encrypted, err = m.encryptPassword(h.Password)
+		if err != nil {
+			return fmt.Errorf("加密密码失败: %v", err)
+		}
+	}
+
 	query := `
 		UPDATE remote_hosts
 		SET name = ?, address = ?, port = ?, username = ?, password = ?, enabled = ?, updated_at = ?
@@ -175,7 +217,7 @@ func (m *Manager) UpdateHost(h *RemoteHost) error {
 		enabled = 1
 	}
 
-	_, err := m.db.Exec(query, h.Name, h.Address, h.Port, h.Username, h.Password, enabled, now, h.ID)
+	_, err := m.db.Exec(query, h.Name, h.Address, h.Port, h.Username, encrypted, enabled, now, h.ID)
 	if err != nil {
 		return fmt.Errorf("更新主机失败: %v", err)
 	}
@@ -391,10 +433,15 @@ func (m *Manager) CheckHostStatus(hostID int) (*RemoteHostStatus, error) {
 	status.Online = true
 	status.ResponseTime = responseTime
 
+	// 可达后进一步校验凭据有效性（命中Token缓存时无额外开销）
+	if _, err := m.getToken(host); err != nil {
+		status.Error = "认证失败: 用户名或密码错误"
+	}
+
 	return status, nil
 }
 
-// CheckAllHostsStatus 检查所有主机状态
+// CheckAllHostsStatus 检查所有主机状态（并发探测，避免单台超时拖慢整体）
 func (m *Manager) CheckAllHostsStatus() (map[int]*RemoteHostStatus, error) {
 	hosts, err := m.GetAllHosts()
 	if err != nil {
@@ -402,17 +449,26 @@ func (m *Manager) CheckAllHostsStatus() (map[int]*RemoteHostStatus, error) {
 	}
 
 	statuses := make(map[int]*RemoteHostStatus)
+	var mu sync.Mutex
+	var wg sync.WaitGroup
 
 	for _, host := range hosts {
 		if !host.Enabled {
 			continue
 		}
 
-		status, _ := m.CheckHostStatus(host.ID)
-		if status != nil {
-			statuses[host.ID] = status
-		}
+		wg.Add(1)
+		go func(hostID int) {
+			defer wg.Done()
+			status, _ := m.CheckHostStatus(hostID)
+			if status != nil {
+				mu.Lock()
+				statuses[hostID] = status
+				mu.Unlock()
+			}
+		}(host.ID)
 	}
+	wg.Wait()
 
 	return statuses, nil
 }

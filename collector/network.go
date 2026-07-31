@@ -14,6 +14,25 @@ import (
 	"github.com/shirou/gopsutil/v3/net"
 )
 
+// updateBaseline 更新网络流量基准值并返回真实累计值
+// 当计数器回绕（当前值 < 上次值，说明宿主机重启）时，把上次累计值滚入基准，
+// 从而实现"历史累计流量"跨重启不清零
+func updateBaseline(baseline *NetworkBaseline, totalRecv, totalSent uint64) (finalRecv, finalSent uint64) {
+	// 检测系统是否重启（当前值 < 上次值）
+	if baseline.LastRecv > 0 && (totalRecv < baseline.LastRecv || totalSent < baseline.LastSent) {
+		// 系统重启了，将上次的累计值加入基准
+		baseline.BytesRecvBaseline += baseline.LastRecv
+		baseline.BytesSentBaseline += baseline.LastSent
+	}
+
+	// 更新上次读取的值
+	baseline.LastRecv = totalRecv
+	baseline.LastSent = totalSent
+
+	// 计算真实的累计值（基准值 + 当前系统值）
+	return baseline.BytesRecvBaseline + totalRecv, baseline.BytesSentBaseline + totalSent
+}
+
 // collectNetwork 采集网络指标（host网络模式下直接读取宿主机网卡）
 func (c *Collector) collectNetwork() (*NetworkMetrics, error) {
 	// 使用 host 网络模式，可以直接读取宿主机网卡数据
@@ -32,20 +51,7 @@ func (c *Collector) collectNetwork() (*NetworkMetrics, error) {
 		totalSent += io.BytesSent
 	}
 
-	// 检测系统是否重启（当前值 < 上次值）
-	if c.networkBaseline.LastRecv > 0 && (totalRecv < c.networkBaseline.LastRecv || totalSent < c.networkBaseline.LastSent) {
-		// 系统重启了，将上次的累计值加入基准
-		c.networkBaseline.BytesRecvBaseline += c.networkBaseline.LastRecv
-		c.networkBaseline.BytesSentBaseline += c.networkBaseline.LastSent
-	}
-
-	// 更新上次读取的值
-	c.networkBaseline.LastRecv = totalRecv
-	c.networkBaseline.LastSent = totalSent
-
-	// 计算真实的累计值（基准值 + 当前系统值）
-	finalRecv := c.networkBaseline.BytesRecvBaseline + totalRecv
-	finalSent := c.networkBaseline.BytesSentBaseline + totalSent
+	finalRecv, finalSent := updateBaseline(c.networkBaseline, totalRecv, totalSent)
 
 	metrics := &NetworkMetrics{
 		BytesRecv: finalRecv,

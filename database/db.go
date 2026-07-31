@@ -38,6 +38,15 @@ func Init(dataDir string) error {
 			return
 		}
 
+		// 初始化总记录数计数器（启动时统计一次，之后增量维护）
+		if err = initTotalRecords(); err != nil {
+			err = fmt.Errorf("初始化记录数统计失败: %v", err)
+			return
+		}
+
+		// 时区一致性检查（时区由 docker-compose.yml 的 TZ 决定）
+		CheckTimezoneChange()
+
 		log.Printf("数据库初始化成功: %s (WAL模式)", dbPath)
 	})
 	return err

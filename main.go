@@ -14,6 +14,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"xingyuan-monitor/database"
 	"xingyuan-monitor/server"
 )
@@ -40,6 +41,13 @@ func main() {
 	}
 	defer database.Close()
 	log.Printf("数据库已初始化: %s", dbPath)
+
+	// 启动数据保留任务：超期原始数据压缩为分钟级后删除，防止数据库无限增长
+	retentionDays := 30
+	if v, err := strconv.Atoi(os.Getenv("METRICS_RETENTION_DAYS")); err == nil && v > 0 {
+		retentionDays = v
+	}
+	database.StartRetentionRoutine(retentionDays)
 
 	srv := server.NewServer()
 	if err := srv.Run(*addr); err != nil {

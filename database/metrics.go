@@ -3,8 +3,32 @@ package database
 import (
 	"fmt"
 	"os"
+	"sync"
+	"sync/atomic"
 	"time"
 )
+
+// totalRecordsCount 内存中维护的总记录数计数器
+// 避免每秒对4张表做全表 COUNT(*)（数据量大时非常慢）
+var totalRecordsCount int64
+
+// initTotalRecords 启动时统计一次总记录数，之后由插入操作增量维护
+func initTotalRecords() error {
+	tables := []string{
+		"cpu_metrics", "memory_metrics", "disk_metrics", "network_metrics",
+		"cpu_metrics_agg", "memory_metrics_agg", "disk_metrics_agg", "network_metrics_agg",
+	}
+	var total int64
+	for _, table := range tables {
+		var count int64
+		if err := db.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&count); err != nil {
+			return fmt.Errorf("统计表 %s 记录数失败: %v", table, err)
+		}
+		total += count
+	}
+	atomic.StoreInt64(&totalRecordsCount, total)
+	return nil
+}
 
 // InsertCPUMetrics 插入CPU监控数据
 func InsertCPUMetrics(usage float64) error {
@@ -13,6 +37,7 @@ func InsertCPUMetrics(usage float64) error {
 	if err != nil {
 		return fmt.Errorf("插入CPU数据失败: %v", err)
 	}
+	atomic.AddInt64(&totalRecordsCount, 1)
 	return nil
 }
 
@@ -24,6 +49,7 @@ func InsertMemoryMetrics(used, total uint64, usage float64) error {
 	if err != nil {
 		return fmt.Errorf("插入内存数据失败: %v", err)
 	}
+	atomic.AddInt64(&totalRecordsCount, 1)
 	return nil
 }
 
@@ -35,6 +61,7 @@ func InsertDiskMetrics(used, free, total uint64, usage, readSpeed, writeSpeed fl
 	if err != nil {
 		return fmt.Errorf("插入磁盘数据失败: %v", err)
 	}
+	atomic.AddInt64(&totalRecordsCount, 1)
 	return nil
 }
 
@@ -46,6 +73,7 @@ func InsertNetworkMetrics(uploadSpeed, downloadSpeed float64, bytesSent, bytesRe
 	if err != nil {
 		return fmt.Errorf("插入网络数据失败: %v", err)
 	}
+	atomic.AddInt64(&totalRecordsCount, 1)
 	return nil
 }
 
@@ -118,6 +146,7 @@ func QueryCPUMetrics(startTime, endTime string, limit int) ([]CPUMetric, error) 
 }
 
 // QueryCPUMetricsSampled 查询CPU监控数据（带采样）
+// 联合原始表与分钟级聚合表，保证超过保留期的历史数据依然可查
 func QueryCPUMetricsSampled(startTime, endTime string, sampleInterval int) ([]CPUMetric, error) {
 	// 使用子查询实现采样：按时间分组，每组取平均值
 	query := `
@@ -125,12 +154,15 @@ func QueryCPUMetricsSampled(startTime, endTime string, sampleInterval int) ([]CP
 			MIN(id) as id,
 			AVG(usage) as usage,
 			MIN(timestamp) as timestamp
-		FROM cpu_metrics 
-		WHERE timestamp >= ? AND timestamp <= ?
+		FROM (
+			SELECT id, usage, timestamp FROM cpu_metrics WHERE timestamp >= ? AND timestamp <= ?
+			UNION ALL
+			SELECT id, usage, timestamp FROM cpu_metrics_agg WHERE timestamp >= ? AND timestamp <= ?
+		)
 		GROUP BY strftime('%s', timestamp) / ?
 		ORDER BY timestamp ASC
 	`
-	rows, err := db.Query(query, startTime, endTime, sampleInterval)
+	rows, err := db.Query(query, startTime, endTime, startTime, endTime, sampleInterval)
 	if err != nil {
 		return nil, fmt.Errorf("查询CPU数据失败: %v", err)
 	}
@@ -168,6 +200,7 @@ func QueryMemoryMetrics(startTime, endTime string, limit int) ([]MemoryMetric, e
 }
 
 // QueryMemoryMetricsSampled 查询内存监控数据（带采样）
+// 联合原始表与分钟级聚合表，保证超过保留期的历史数据依然可查
 func QueryMemoryMetricsSampled(startTime, endTime string, sampleInterval int) ([]MemoryMetric, error) {
 	query := `
 		SELECT 
@@ -176,12 +209,15 @@ func QueryMemoryMetricsSampled(startTime, endTime string, sampleInterval int) ([
 			CAST(AVG(total) AS INTEGER) as total,
 			AVG(usage) as usage,
 			MIN(timestamp) as timestamp
-		FROM memory_metrics 
-		WHERE timestamp >= ? AND timestamp <= ?
+		FROM (
+			SELECT id, used, total, usage, timestamp FROM memory_metrics WHERE timestamp >= ? AND timestamp <= ?
+			UNION ALL
+			SELECT id, used, total, usage, timestamp FROM memory_metrics_agg WHERE timestamp >= ? AND timestamp <= ?
+		)
 		GROUP BY strftime('%s', timestamp) / ?
 		ORDER BY timestamp ASC
 	`
-	rows, err := db.Query(query, startTime, endTime, sampleInterval)
+	rows, err := db.Query(query, startTime, endTime, startTime, endTime, sampleInterval)
 	if err != nil {
 		return nil, fmt.Errorf("查询内存数据失败: %v", err)
 	}
@@ -219,6 +255,7 @@ func QueryDiskMetrics(startTime, endTime string, limit int) ([]DiskMetric, error
 }
 
 // QueryDiskMetricsSampled 查询磁盘监控数据（带采样）
+// 联合原始表与分钟级聚合表，保证超过保留期的历史数据依然可查
 func QueryDiskMetricsSampled(startTime, endTime string, sampleInterval int) ([]DiskMetric, error) {
 	query := `
 		SELECT 
@@ -230,12 +267,15 @@ func QueryDiskMetricsSampled(startTime, endTime string, sampleInterval int) ([]D
 			AVG(read_speed) as read_speed,
 			AVG(write_speed) as write_speed,
 			MIN(timestamp) as timestamp
-		FROM disk_metrics 
-		WHERE timestamp >= ? AND timestamp <= ?
+		FROM (
+			SELECT id, used, free, total, usage, read_speed, write_speed, timestamp FROM disk_metrics WHERE timestamp >= ? AND timestamp <= ?
+			UNION ALL
+			SELECT id, used, free, total, usage, read_speed, write_speed, timestamp FROM disk_metrics_agg WHERE timestamp >= ? AND timestamp <= ?
+		)
 		GROUP BY strftime('%s', timestamp) / ?
 		ORDER BY timestamp ASC
 	`
-	rows, err := db.Query(query, startTime, endTime, sampleInterval)
+	rows, err := db.Query(query, startTime, endTime, startTime, endTime, sampleInterval)
 	if err != nil {
 		return nil, fmt.Errorf("查询磁盘数据失败: %v", err)
 	}
@@ -273,6 +313,7 @@ func QueryNetworkMetrics(startTime, endTime string, limit int) ([]NetworkMetric,
 }
 
 // QueryNetworkMetricsSampled 查询网络监控数据（带采样）
+// 联合原始表与分钟级聚合表，保证超过保留期的历史数据依然可查
 func QueryNetworkMetricsSampled(startTime, endTime string, sampleInterval int) ([]NetworkMetric, error) {
 	query := `
 		SELECT 
@@ -282,12 +323,15 @@ func QueryNetworkMetricsSampled(startTime, endTime string, sampleInterval int) (
 			MAX(bytes_sent) as bytes_sent,
 			MAX(bytes_recv) as bytes_recv,
 			MIN(timestamp) as timestamp
-		FROM network_metrics 
-		WHERE timestamp >= ? AND timestamp <= ?
+		FROM (
+			SELECT id, upload_speed, download_speed, bytes_sent, bytes_recv, timestamp FROM network_metrics WHERE timestamp >= ? AND timestamp <= ?
+			UNION ALL
+			SELECT id, upload_speed, download_speed, bytes_sent, bytes_recv, timestamp FROM network_metrics_agg WHERE timestamp >= ? AND timestamp <= ?
+		)
 		GROUP BY strftime('%s', timestamp) / ?
 		ORDER BY timestamp ASC
 	`
-	rows, err := db.Query(query, startTime, endTime, sampleInterval)
+	rows, err := db.Query(query, startTime, endTime, startTime, endTime, sampleInterval)
 	if err != nil {
 		return nil, fmt.Errorf("查询网络数据失败: %v", err)
 	}
@@ -341,32 +385,38 @@ type DatabaseStats struct {
 	DataSize     int64 `json:"data_size"`     // data目录总大小（字节）
 }
 
+// dirSizeCache 目录大小缓存（递归扫描目录较重，60秒刷新一次即可）
+var (
+	dirSizeMu       sync.Mutex
+	dirSizeCached   int64
+	dirSizeCachedAt time.Time
+)
+
 // GetDatabaseStats 获取数据库统计信息
+// 总记录数使用内存计数器，目录大小使用60秒缓存，避免每秒全表扫描
 func GetDatabaseStats() (*DatabaseStats, error) {
-	stats := &DatabaseStats{}
-	
-	// 统计各表数据总条数
-	var cpuCount, memoryCount, diskCount, networkCount int64
-	
-	db.QueryRow("SELECT COUNT(*) FROM cpu_metrics").Scan(&cpuCount)
-	db.QueryRow("SELECT COUNT(*) FROM memory_metrics").Scan(&memoryCount)
-	db.QueryRow("SELECT COUNT(*) FROM disk_metrics").Scan(&diskCount)
-	db.QueryRow("SELECT COUNT(*) FROM network_metrics").Scan(&networkCount)
-	
-	stats.TotalRecords = cpuCount + memoryCount + diskCount + networkCount
-	
-	// 统计data目录的总大小
-	// 优先尝试 /app/data（容器中），然后尝试 ./data（本地开发）
-	dataSize, err := getDirSize("/app/data")
-	if err != nil {
-		dataSize, err = getDirSize("./data")
-		if err != nil {
-			// 目录大小获取失败不影响总记录数返回
-			dataSize = 0
-		}
+	stats := &DatabaseStats{
+		TotalRecords: atomic.LoadInt64(&totalRecordsCount),
 	}
-	stats.DataSize = dataSize
-	
+
+	dirSizeMu.Lock()
+	if time.Since(dirSizeCachedAt) > 60*time.Second {
+		// 统计data目录的总大小
+		// 优先尝试 /app/data（容器中），然后尝试 ./data（本地开发）
+		dataSize, err := getDirSize("/app/data")
+		if err != nil {
+			dataSize, err = getDirSize("./data")
+			if err != nil {
+				// 目录大小获取失败不影响总记录数返回
+				dataSize = 0
+			}
+		}
+		dirSizeCached = dataSize
+		dirSizeCachedAt = time.Now()
+	}
+	stats.DataSize = dirSizeCached
+	dirSizeMu.Unlock()
+
 	return stats, nil
 }
 
@@ -412,7 +462,7 @@ type DataTimeRange struct {
 func GetDataTimeRange() (*DataTimeRange, error) {
 	var minTime, maxTime string
 	
-	// 查询所有表的最早和最晚时间
+	// 查询所有表的最早和最晚时间（含分钟级聚合表，保证清理后时间范围不缩水）
 	query := `
 		SELECT 
 			MIN(min_ts) as min_time,
@@ -425,6 +475,14 @@ func GetDataTimeRange() (*DataTimeRange, error) {
 			SELECT MIN(timestamp), MAX(timestamp) FROM disk_metrics
 			UNION ALL
 			SELECT MIN(timestamp), MAX(timestamp) FROM network_metrics
+			UNION ALL
+			SELECT MIN(timestamp), MAX(timestamp) FROM cpu_metrics_agg
+			UNION ALL
+			SELECT MIN(timestamp), MAX(timestamp) FROM memory_metrics_agg
+			UNION ALL
+			SELECT MIN(timestamp), MAX(timestamp) FROM disk_metrics_agg
+			UNION ALL
+			SELECT MIN(timestamp), MAX(timestamp) FROM network_metrics_agg
 		)
 	`
 	
