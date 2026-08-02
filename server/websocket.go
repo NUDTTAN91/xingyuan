@@ -20,6 +20,14 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// WebSocket 连接参数
+const (
+	wsMaxClients   = 100              // 最大并发连接数
+	wsWriteTimeout = 10 * time.Second // 单次写超时
+	wsPongTimeout  = 90 * time.Second // 读超时：超过该时长未收到pong/消息判定为死连接
+	wsPingInterval = 30 * time.Second // 心跳间隔
+)
+
 // handleWebSocket WebSocket连接处理
 func (s *Server) handleWebSocket(c *gin.Context) {
 	// 优先从 Sec-WebSocket-Protocol 子协议中获取 Token（不进访问日志，比URL参数安全）
@@ -54,18 +62,28 @@ func (s *Server) handleWebSocket(c *gin.Context) {
 	// 验证 Token
 	if token == "" {
 		log.Printf("WebSocket 连接被拒绝：未提供 Token")
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "未提供认证信息"})
+		respondError(c, http.StatusUnauthorized, "未提供认证信息")
 		return
 	}
 
 	claims, err := s.authManager.ValidateToken(token, auth.TokenTypeAccess)
 	if err != nil {
 		log.Printf("WebSocket 连接被拒绝：Token 验证失败: %v", err)
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Token无效或已过期"})
+		respondError(c, http.StatusUnauthorized, "Token无效或已过期")
 		return
 	}
 
 	log.Printf("WebSocket 连接成功，用户: %s, IP: %s", claims.Username, c.ClientIP())
+
+	// 连接数上限保护
+	s.wsMutex.Lock()
+	clientCount := len(s.wsClients)
+	s.wsMutex.Unlock()
+	if clientCount >= wsMaxClients {
+		log.Printf("WebSocket 连接被拒绝：已达连接数上限 %d", wsMaxClients)
+		respondError(c, http.StatusServiceUnavailable, "连接数已达上限")
+		return
+	}
 
 	// 若客户端通过子协议传递Token，握手响应需回选一个客户端提供的子协议
 	var responseHeader http.Header
@@ -96,23 +114,46 @@ func (s *Server) handleWebSocket(c *gin.Context) {
 		conn.Close()
 	}()
 
+	// 读超时 + pong心跳：死连接在 wsPongTimeout 内被回收，不再等TCP层超时
+	conn.SetReadDeadline(time.Now().Add(wsPongTimeout))
+	conn.SetPongHandler(func(string) error {
+		conn.SetReadDeadline(time.Now().Add(wsPongTimeout))
+		return nil
+	})
+
 	// 保持连接
 	for {
 		if _, _, err := conn.ReadMessage(); err != nil {
 			break
 		}
+		// 收到任意消息也视为存活
+		conn.SetReadDeadline(time.Now().Add(wsPongTimeout))
 	}
 }
 
-// wsWriter 单个WS连接的发送协程：带写超时，慢客户端只影响自己
+// wsWriter 单个WS连接的发送协程：带写超时与ping心跳，慢客户端只影响自己
 func (s *Server) wsWriter(conn *websocket.Conn, sendCh chan *collector.SystemMetrics) {
-	for metrics := range sendCh {
-		conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-		if err := conn.WriteJSON(metrics); err != nil {
-			log.Printf("WebSocket write error: %v", err)
-			// 关闭连接使读循环退出，触发注销清理
-			conn.Close()
-			return
+	pingTicker := time.NewTicker(wsPingInterval)
+	defer pingTicker.Stop()
+
+	for {
+		select {
+		case metrics, ok := <-sendCh:
+			if !ok {
+				return
+			}
+			conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout))
+			if err := conn.WriteJSON(metrics); err != nil {
+				log.Printf("WebSocket write error: %v", err)
+				// 关闭连接使读循环退出，触发注销清理
+				conn.Close()
+				return
+			}
+		case <-pingTicker.C:
+			if err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(wsWriteTimeout)); err != nil {
+				conn.Close()
+				return
+			}
 		}
 	}
 }

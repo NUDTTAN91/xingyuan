@@ -103,11 +103,15 @@ func (m *Manager) migratePlaintextPasswords() {
 	for rows.Next() {
 		var h hostPw
 		if err := rows.Scan(&h.id, &h.password); err != nil {
+			log.Printf("密码迁移: 读取主机记录失败: %v", err)
 			continue
 		}
 		if !strings.HasPrefix(h.password, encPrefix) {
 			pending = append(pending, h)
 		}
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("密码迁移: 遍历主机记录失败: %v", err)
 	}
 	rows.Close()
 

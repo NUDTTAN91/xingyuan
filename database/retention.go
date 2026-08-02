@@ -46,6 +46,19 @@ var aggregateTasks = []aggregateTask{
 	},
 }
 
+// retentionStopCh 数据保留任务停止信号
+var retentionStopCh = make(chan struct{})
+
+// StopRetention 停止数据保留后台任务（优雅停机时在关闭数据库前调用）
+func StopRetention() {
+	select {
+	case <-retentionStopCh:
+		// 已关闭
+	default:
+		close(retentionStopCh)
+	}
+}
+
 // StartRetentionRoutine 启动数据保留后台任务
 // 每天将超过 retentionDays 的原始秒级数据压缩为分钟级聚合数据后删除，
 // 防止数据库无限增长导致系统越来越慢
@@ -56,13 +69,22 @@ func StartRetentionRoutine(retentionDays int) {
 
 	go func() {
 		// 启动1分钟后先执行一次（处理历史积压），之后每24小时执行一次
-		time.Sleep(1 * time.Minute)
-		runRetention(retentionDays)
+		select {
+		case <-time.After(1 * time.Minute):
+			runRetention(retentionDays)
+		case <-retentionStopCh:
+			return
+		}
 
 		ticker := time.NewTicker(24 * time.Hour)
 		defer ticker.Stop()
-		for range ticker.C {
-			runRetention(retentionDays)
+		for {
+			select {
+			case <-ticker.C:
+				runRetention(retentionDays)
+			case <-retentionStopCh:
+				return
+			}
 		}
 	}()
 

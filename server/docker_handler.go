@@ -20,9 +20,7 @@ func (s *Server) handleDocker(c *gin.Context) {
 	dockerMetrics, err := s.collector.CollectDocker()
 	if err != nil {
 		log.Printf("[ERROR] CollectDocker failed: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": err.Error(),
-		})
+		respondError(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -53,26 +51,17 @@ func (s *Server) containerActionHandler(action func(containerID string) error, s
 		}
 
 		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"success": false,
-				"error":   "请求参数错误",
-			})
+			respondError(c, http.StatusBadRequest, "请求参数错误")
 			return
 		}
 
 		if !isValidContainerID(req.ContainerID) {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"success": false,
-				"error":   "无效的容器ID",
-			})
+			respondError(c, http.StatusBadRequest, "无效的容器ID")
 			return
 		}
 
 		if err := action(req.ContainerID); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"success": false,
-				"error":   err.Error(),
-			})
+			respondError(c, http.StatusInternalServerError, err.Error())
 			return
 		}
 

@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"crypto/tls"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -42,6 +44,12 @@ type TokenCache struct {
 	ExpiresAt    time.Time
 }
 
+// hostCacheEntry 主机配置缓存条目
+type hostCacheEntry struct {
+	host     RemoteHost
+	cachedAt time.Time
+}
+
 // Manager 远程主机管理器
 type Manager struct {
 	db          *sql.DB
@@ -49,6 +57,9 @@ type Manager struct {
 	tokenCache  map[int]*TokenCache // host_id -> token
 	cacheMutex  sync.RWMutex
 	encryptKey  []byte // 远程主机密码的AES-256-GCM加密密钥
+	// 主机配置缓存：避免每次代理请求都查库+解密（远程页每秒多次调用）
+	hostCache   map[int]*hostCacheEntry
+	hostCacheMu sync.RWMutex
 }
 
 // NewManager 创建远程主机管理器
@@ -69,6 +80,7 @@ func NewManager(db *sql.DB) *Manager {
 		},
 		tokenCache: make(map[int]*TokenCache),
 		encryptKey: encryptKey,
+		hostCache:  make(map[int]*hostCacheEntry),
 	}
 
 	// 将存量明文密码一次性加密
@@ -113,12 +125,47 @@ func (m *Manager) GetAllHosts() ([]RemoteHost, error) {
 
 		hosts = append(hosts, h)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("遍历主机列表失败: %v", err)
+	}
 
 	return hosts, nil
 }
 
-// GetHostByID 根据 ID 获取主机
+// hostCacheTTL 主机配置缓存有效期（兜底失效，正常由增删改主动失效）
+const hostCacheTTL = 60 * time.Second
+
+// invalidateHostCache 使指定主机的配置缓存失效（增删改时调用）
+func (m *Manager) invalidateHostCache(id int) {
+	m.hostCacheMu.Lock()
+	delete(m.hostCache, id)
+	m.hostCacheMu.Unlock()
+}
+
+// GetHostByID 根据 ID 获取主机（带内存缓存，避免每次代理请求都查库+解密）
 func (m *Manager) GetHostByID(id int) (*RemoteHost, error) {
+	m.hostCacheMu.RLock()
+	if entry, ok := m.hostCache[id]; ok && time.Since(entry.cachedAt) < hostCacheTTL {
+		host := entry.host // 返回副本，避免调用方修改缓存
+		m.hostCacheMu.RUnlock()
+		return &host, nil
+	}
+	m.hostCacheMu.RUnlock()
+
+	host, err := m.getHostByIDFromDB(id)
+	if err != nil {
+		return nil, err
+	}
+
+	m.hostCacheMu.Lock()
+	m.hostCache[id] = &hostCacheEntry{host: *host, cachedAt: time.Now()}
+	m.hostCacheMu.Unlock()
+
+	return host, nil
+}
+
+// getHostByIDFromDB 从数据库读取主机配置（含密码解密）
+func (m *Manager) getHostByIDFromDB(id int) (*RemoteHost, error) {
 	query := `
 		SELECT id, name, address, port, username, password, enabled, created_at, updated_at
 		FROM remote_hosts
@@ -222,10 +269,11 @@ func (m *Manager) UpdateHost(h *RemoteHost) error {
 		return fmt.Errorf("更新主机失败: %v", err)
 	}
 
-	// 清除 Token 缓存
+	// 清除 Token 缓存与主机配置缓存
 	m.cacheMutex.Lock()
 	delete(m.tokenCache, h.ID)
 	m.cacheMutex.Unlock()
+	m.invalidateHostCache(h.ID)
 
 	log.Printf("更新远程主机成功: %s (%s:%d)", h.Name, h.Address, h.Port)
 	return nil
@@ -240,10 +288,11 @@ func (m *Manager) DeleteHost(id int) error {
 		return fmt.Errorf("删除主机失败: %v", err)
 	}
 
-	// 清除 Token 缓存
+	// 清除 Token 缓存与主机配置缓存
 	m.cacheMutex.Lock()
 	delete(m.tokenCache, id)
 	m.cacheMutex.Unlock()
+	m.invalidateHostCache(id)
 
 	log.Printf("删除远程主机成功: ID=%d", id)
 	return nil
@@ -264,6 +313,25 @@ func (m *Manager) getToken(host *RemoteHost) (string, error) {
 
 	// 需要重新登录
 	return m.login(host)
+}
+
+// parseJWTExpiry 解析JWT的exp声明（不校验签名，仅用于估算本地缓存有效期）
+func parseJWTExpiry(token string) (time.Time, error) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return time.Time{}, fmt.Errorf("非标准JWT格式")
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return time.Time{}, fmt.Errorf("解码JWT载荷失败: %v", err)
+	}
+	var claims struct {
+		Exp int64 `json:"exp"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil || claims.Exp == 0 {
+		return time.Time{}, fmt.Errorf("JWT缺少exp声明")
+	}
+	return time.Unix(claims.Exp, 0), nil
 }
 
 // login 登录远程主机
@@ -304,12 +372,21 @@ func (m *Manager) login(host *RemoteHost) (string, error) {
 		return "", fmt.Errorf("登录失败: %s", result.Message)
 	}
 
-	// 缓存 Token（Access Token 默认 2 小时有效）
+	// 缓存Token：从JWT的exp声明推算真实有效期并提前10%过期，
+	// 兼容远端任意的 ACCESS_TOKEN_EXPIRE_MINUTES 配置（不再假设固定2小时）
+	expiresAt := time.Now().Add(110 * time.Minute) // 解析失败时的兜底值
+	if exp, err := parseJWTExpiry(result.AccessToken); err == nil {
+		ttl := time.Until(exp)
+		if ttl > time.Minute {
+			expiresAt = time.Now().Add(ttl * 9 / 10)
+		}
+	}
+
 	m.cacheMutex.Lock()
 	m.tokenCache[host.ID] = &TokenCache{
 		AccessToken:  result.AccessToken,
 		RefreshToken: result.RefreshToken,
-		ExpiresAt:    time.Now().Add(110 * time.Minute), // 提前 10 分钟过期
+		ExpiresAt:    expiresAt,
 	}
 	m.cacheMutex.Unlock()
 

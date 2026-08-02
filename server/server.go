@@ -50,6 +50,8 @@ type Server struct {
 	metricsMutex  sync.RWMutex
 	// 落库有界队列：由单个常驻写协程消费，避免SQLite阻塞时goroutine无界堆积
 	saveQueue chan saveTask
+	// 停机信号：通知广播等后台协程退出
+	stopCh chan struct{}
 }
 
 // NewServer 创建服务器实例
@@ -67,6 +69,7 @@ func NewServer() *Server {
 		wsClients:     make(map[*websocket.Conn]chan *collector.SystemMetrics),
 		// 队列容量60（约1分钟数据）：SQLite长时间阻塞时丢弃新数据而非无界堆积
 		saveQueue: make(chan saveTask, 60),
+		stopCh:    make(chan struct{}),
 		upgrader: websocket.Upgrader{
 			// 同源校验：拒绝其他网站页面发起的跨源WS连接
 			CheckOrigin: func(r *http.Request) bool {
@@ -197,6 +200,16 @@ func (s *Server) setupRoutes() {
 	}
 }
 
+// respondError 统一错误响应格式
+// 同时包含 success/message/error 三个字段，兼容前端历史上对三种取法的依赖
+func respondError(c *gin.Context, code int, msg string) {
+	c.JSON(code, gin.H{
+		"success": false,
+		"message": msg,
+		"error":   msg,
+	})
+}
+
 // handleIndex 首页处理
 func (s *Server) handleIndex(c *gin.Context) {
 	c.File("./static/index.html")
@@ -205,9 +218,17 @@ func (s *Server) handleIndex(c *gin.Context) {
 // Run 启动服务器（支持优雅停机：收到SIGINT/SIGTERM后停止接收新请求并等待处理完成）
 func (s *Server) Run(addr string) error {
 	// 启动常驻落库协程
-	go s.saveWorker()
+	saveDone := make(chan struct{})
+	go func() {
+		defer close(saveDone)
+		s.saveWorker()
+	}()
 	// 启动WebSocket广播
-	go s.BroadcastMetrics()
+	broadcastDone := make(chan struct{})
+	go func() {
+		defer close(broadcastDone)
+		s.BroadcastMetrics()
+	}()
 
 	log.Printf("星垣启动成功，访问地址: http://%s", addr)
 	log.Printf("Author: tan91 | GitHub: https://github.com/NUDTTAN91")
@@ -235,6 +256,15 @@ func (s *Server) Run(addr string) error {
 		if err := httpServer.Shutdown(ctx); err != nil {
 			log.Printf("HTTP服务停机异常: %v", err)
 		}
+
+		// 按序停止后台协程：先停广播并等其完全退出（防止向已关闭队列发送），
+		// 再关闭落库队列（写协程排空剩余数据后退出），最后由main关闭数据库
+		close(s.stopCh)
+		<-broadcastDone
+		close(s.saveQueue)
+		<-saveDone
+		database.StopRetention()
+
 		log.Printf("服务已停止")
 		return nil
 	}

@@ -25,9 +25,7 @@ func (s *Server) authMiddleware() gin.HandlerFunc {
 
 		// 如果没有 Token，返回 401
 		if authHeader == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"error": "未提供认证信息",
-			})
+			respondError(c, http.StatusUnauthorized, "未提供认证信息")
 			c.Abort()
 			return
 		}
@@ -35,9 +33,7 @@ func (s *Server) authMiddleware() gin.HandlerFunc {
 		// 解析 Bearer Token
 		parts := strings.SplitN(authHeader, " ", 2)
 		if len(parts) != 2 || parts[0] != "Bearer" {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"error": "无效的认证格式",
-			})
+			respondError(c, http.StatusUnauthorized, "无效的认证格式")
 			c.Abort()
 			return
 		}
@@ -47,9 +43,7 @@ func (s *Server) authMiddleware() gin.HandlerFunc {
 		// 验证 Access Token
 		claims, err := s.authManager.ValidateToken(tokenString, auth.TokenTypeAccess)
 		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"error": "Token无效或已过期",
-			})
+			respondError(c, http.StatusUnauthorized, "Token无效或已过期")
 			c.Abort()
 			return
 		}
@@ -69,10 +63,7 @@ func (s *Server) handleLogin(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"success": false,
-			"message": "请求参数错误",
-		})
+		respondError(c, http.StatusBadRequest, "请求参数错误")
 		return
 	}
 
@@ -83,15 +74,9 @@ func (s *Server) handleLogin(c *gin.Context) {
 	err := s.authManager.Authenticate(req.Username, req.Password, clientIP)
 	if err != nil {
 		if err == auth.ErrTooManyAttempts {
-			c.JSON(http.StatusTooManyRequests, gin.H{
-				"success": false,
-				"message": "登录失败次数过多，请稍后再试",
-			})
+			respondError(c, http.StatusTooManyRequests, "登录失败次数过多，请稍后再试")
 		} else {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"success": false,
-				"message": "用户名或密码错误",
-			})
+			respondError(c, http.StatusUnauthorized, "用户名或密码错误")
 		}
 		return
 	}
@@ -99,10 +84,7 @@ func (s *Server) handleLogin(c *gin.Context) {
 	// 生成 Token 对
 	accessToken, refreshToken, err := s.authManager.GenerateTokenPair(req.Username, req.Remember)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"success": false,
-			"message": "生成Token失败",
-		})
+		respondError(c, http.StatusInternalServerError, "生成Token失败")
 		return
 	}
 
@@ -155,30 +137,21 @@ func (s *Server) handleRefresh(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"success": false,
-			"message": "请求参数错误",
-		})
+		respondError(c, http.StatusBadRequest, "请求参数错误")
 		return
 	}
 
 	// 验证 Refresh Token
 	claims, err := s.authManager.ValidateToken(req.RefreshToken, auth.TokenTypeRefresh)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"success": false,
-			"message": "Refresh Token无效或已过期",
-		})
+		respondError(c, http.StatusUnauthorized, "Refresh Token无效或已过期")
 		return
 	}
 
 	// 生成新的 Token 对
 	accessToken, refreshToken, err := s.authManager.GenerateTokenPair(claims.Username, false)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"success": false,
-			"message": "生成Token失败",
-		})
+		respondError(c, http.StatusInternalServerError, "生成Token失败")
 		return
 	}
 

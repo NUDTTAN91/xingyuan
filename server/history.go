@@ -28,7 +28,7 @@ func (s *Server) historyHandler(query func(startTime, endTime string, sampleInte
 
 		metrics, err := query(startTime, endTime, sampleInterval)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			respondError(c, http.StatusInternalServerError, err.Error())
 			return
 		}
 		c.JSON(http.StatusOK, metrics)
@@ -68,7 +68,7 @@ func calculateSampleInterval(startTime, endTime string) int {
 func (s *Server) handleDatabaseStats(c *gin.Context) {
 	stats, err := database.GetDatabaseStats()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, stats)
@@ -78,7 +78,7 @@ func (s *Server) handleDatabaseStats(c *gin.Context) {
 func (s *Server) handleDataTimeRange(c *gin.Context) {
 	timeRange, err := database.GetDataTimeRange()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, timeRange)

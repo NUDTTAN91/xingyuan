@@ -142,6 +142,9 @@ func QueryCPUMetrics(startTime, endTime string, limit int) ([]CPUMetric, error) 
 		}
 		metrics = append(metrics, m)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("遍历查询结果失败: %v", err)
+	}
 	return metrics, nil
 }
 
@@ -176,6 +179,9 @@ func QueryCPUMetricsSampled(startTime, endTime string, sampleInterval int) ([]CP
 		}
 		metrics = append(metrics, m)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("遍历查询结果失败: %v", err)
+	}
 	return metrics, nil
 }
 
@@ -195,6 +201,9 @@ func QueryMemoryMetrics(startTime, endTime string, limit int) ([]MemoryMetric, e
 			return nil, err
 		}
 		metrics = append(metrics, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("遍历查询结果失败: %v", err)
 	}
 	return metrics, nil
 }
@@ -231,6 +240,9 @@ func QueryMemoryMetricsSampled(startTime, endTime string, sampleInterval int) ([
 		}
 		metrics = append(metrics, m)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("遍历查询结果失败: %v", err)
+	}
 	return metrics, nil
 }
 
@@ -250,6 +262,9 @@ func QueryDiskMetrics(startTime, endTime string, limit int) ([]DiskMetric, error
 			return nil, err
 		}
 		metrics = append(metrics, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("遍历查询结果失败: %v", err)
 	}
 	return metrics, nil
 }
@@ -289,6 +304,9 @@ func QueryDiskMetricsSampled(startTime, endTime string, sampleInterval int) ([]D
 		}
 		metrics = append(metrics, m)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("遍历查询结果失败: %v", err)
+	}
 	return metrics, nil
 }
 
@@ -308,6 +326,9 @@ func QueryNetworkMetrics(startTime, endTime string, limit int) ([]NetworkMetric,
 			return nil, err
 		}
 		metrics = append(metrics, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("遍历查询结果失败: %v", err)
 	}
 	return metrics, nil
 }
@@ -344,6 +365,9 @@ func QueryNetworkMetricsSampled(startTime, endTime string, sampleInterval int) (
 			return nil, err
 		}
 		metrics = append(metrics, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("遍历查询结果失败: %v", err)
 	}
 	return metrics, nil
 }

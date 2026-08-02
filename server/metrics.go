@@ -32,16 +32,14 @@ func (s *Server) handleMetrics(c *gin.Context) {
 
 	if metrics == nil {
 		// 服务刚启动、首次采集尚未完成（最多1秒窗口）
-		c.JSON(http.StatusServiceUnavailable, gin.H{
-			"error": "监控数据尚未就绪，请稍后重试",
-		})
+		respondError(c, http.StatusServiceUnavailable, "监控数据尚未就绪，请稍后重试")
 		return
 	}
 
 	c.JSON(http.StatusOK, metrics)
 }
 
-// BroadcastMetrics 广播监控数据到所有WebSocket客户端
+// BroadcastMetrics 广播监控数据到所有WebSocket客户端（收到停机信号后退出）
 func (s *Server) BroadcastMetrics() {
 	// 启动时立即采集一次，让缓存尽快就绪
 	s.collectAndBroadcast()
@@ -49,8 +47,13 @@ func (s *Server) BroadcastMetrics() {
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		s.collectAndBroadcast()
+	for {
+		select {
+		case <-ticker.C:
+			s.collectAndBroadcast()
+		case <-s.stopCh:
+			return
+		}
 	}
 }
 

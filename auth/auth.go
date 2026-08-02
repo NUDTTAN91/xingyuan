@@ -20,6 +20,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"xingyuan-monitor/database"
 
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
@@ -143,6 +144,28 @@ func NewAuthManager() *AuthManager {
 		tokenBlacklist:     make(map[string]time.Time),
 	}
 	
+	// 从数据库恢复黑名单与登录锁定状态（重启后不丢失；数据库未初始化时自动跳过）
+	if entries, err := database.LoadBlacklist(); err != nil {
+		log.Printf("恢复Token黑名单失败: %v", err)
+	} else if len(entries) > 0 {
+		for _, e := range entries {
+			am.tokenBlacklist[e.JTI] = e.ExpiresAt
+		}
+		log.Printf("已恢复 %d 条Token黑名单记录", len(entries))
+	}
+	if entries, err := database.LoadLoginAttempts(); err != nil {
+		log.Printf("恢复登录锁定状态失败: %v", err)
+	} else if len(entries) > 0 {
+		for _, e := range entries {
+			am.loginAttempts[e.IP] = &LoginAttempt{
+				Count:       e.Count,
+				LastAttempt: e.LastAttempt,
+				LockedUntil: e.LockedUntil,
+			}
+		}
+		log.Printf("已恢复 %d 条登录失败记录", len(entries))
+	}
+
 	// 启动清理任务
 	go am.cleanupRoutine()
 	
@@ -287,6 +310,11 @@ func (am *AuthManager) RevokeToken(tokenString string) error {
 	am.tokenBlacklist[claims.ID] = claims.ExpiresAt.Time
 	am.blacklistMu.Unlock()
 	
+	// 持久化到数据库（重启后仍然失效）
+	if err := database.SaveBlacklistToken(claims.ID, claims.ExpiresAt.Time); err != nil {
+		log.Printf("持久化黑名单Token失败: %v", err)
+	}
+	
 	return nil
 }
 
@@ -348,6 +376,11 @@ func (am *AuthManager) recordFailedAttempt(clientIP string) {
 	if attempt.Count >= am.maxLoginAttempts {
 		attempt.LockedUntil = now.Add(am.lockDuration)
 	}
+	
+	// 持久化（重启后锁定状态不丢失）
+	if err := database.SaveLoginAttempt(clientIP, attempt.Count, attempt.LastAttempt, attempt.LockedUntil); err != nil {
+		log.Printf("持久化登录失败记录失败: %v", err)
+	}
 }
 
 // pruneExpiredAttemptsLocked 清理已过锁定期且1小时无活动的记录（调用方需持有attemptsMu写锁）
@@ -365,6 +398,9 @@ func (am *AuthManager) clearFailedAttempts(clientIP string) {
 	defer am.attemptsMu.Unlock()
 	
 	delete(am.loginAttempts, clientIP)
+	if err := database.DeleteLoginAttempt(clientIP); err != nil {
+		log.Printf("清除登录失败记录失败: %v", err)
+	}
 }
 
 // cleanupRoutine 定期清理过期数据
@@ -390,9 +426,15 @@ func (am *AuthManager) cleanupRoutine() {
 			// 如果锁定已过期且超过24小时没有尝试，删除记录
 			if now.After(attempt.LockedUntil) && now.Sub(attempt.LastAttempt) > 24*time.Hour {
 				delete(am.loginAttempts, ip)
+				database.DeleteLoginAttempt(ip)
 			}
 		}
 		am.attemptsMu.Unlock()
+		
+		// 同步清理数据库中的过期黑名单
+		if err := database.CleanExpiredBlacklist(); err != nil {
+			log.Printf("清理过期黑名单失败: %v", err)
+		}
 	}
 }
 

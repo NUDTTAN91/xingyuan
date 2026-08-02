@@ -32,10 +32,7 @@ func parseIntParam(c *gin.Context, name string) (int, bool) {
 func (s *Server) handleGetRemoteHosts(c *gin.Context) {
 	hosts, err := s.remoteManager.GetAllHosts()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
+		respondError(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -49,10 +46,7 @@ func (s *Server) handleGetRemoteHosts(c *gin.Context) {
 func (s *Server) handleAddRemoteHost(c *gin.Context) {
 	var host remote.RemoteHost
 	if err := c.ShouldBindJSON(&host); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"success": false,
-			"message": "请求参数错误",
-		})
+		respondError(c, http.StatusBadRequest, "请求参数错误")
 		return
 	}
 
@@ -60,12 +54,12 @@ func (s *Server) handleAddRemoteHost(c *gin.Context) {
 	host.Enabled = true
 
 	if err := s.remoteManager.AddHost(&host); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
+		respondError(c, http.StatusInternalServerError, err.Error())
 		return
 	}
+
+	// 响应中不回显明文密码
+	host.Password = ""
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -78,30 +72,21 @@ func (s *Server) handleAddRemoteHost(c *gin.Context) {
 func (s *Server) handleUpdateRemoteHost(c *gin.Context) {
 	var host remote.RemoteHost
 	if err := c.ShouldBindJSON(&host); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"success": false,
-			"message": "请求参数错误",
-		})
+		respondError(c, http.StatusBadRequest, "请求参数错误")
 		return
 	}
 
 	// 从 URL 中获取 ID
 	hostID, ok := parseIntParam(c, "id")
 	if !ok {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"success": false,
-			"message": "无效的主机 ID",
-		})
+		respondError(c, http.StatusBadRequest, "无效的主机 ID")
 		return
 	}
 
 	host.ID = hostID
 
 	if err := s.remoteManager.UpdateHost(&host); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
+		respondError(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -115,18 +100,12 @@ func (s *Server) handleUpdateRemoteHost(c *gin.Context) {
 func (s *Server) handleDeleteRemoteHost(c *gin.Context) {
 	hostID, ok := parseIntParam(c, "id")
 	if !ok {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"success": false,
-			"message": "无效的主机 ID",
-		})
+		respondError(c, http.StatusBadRequest, "无效的主机 ID")
 		return
 	}
 
 	if err := s.remoteManager.DeleteHost(hostID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
+		respondError(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -140,19 +119,13 @@ func (s *Server) handleDeleteRemoteHost(c *gin.Context) {
 func (s *Server) handleCheckHostStatus(c *gin.Context) {
 	hostID, ok := parseIntParam(c, "id")
 	if !ok {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"success": false,
-			"message": "无效的主机 ID",
-		})
+		respondError(c, http.StatusBadRequest, "无效的主机 ID")
 		return
 	}
 
 	status, err := s.remoteManager.CheckHostStatus(hostID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
+		respondError(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -166,10 +139,7 @@ func (s *Server) handleCheckHostStatus(c *gin.Context) {
 func (s *Server) handleCheckAllHostsStatus(c *gin.Context) {
 	statuses, err := s.remoteManager.CheckAllHostsStatus()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
+		respondError(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -187,9 +157,7 @@ func (s *Server) remoteProxyHandler(apiPath string, forwardQuery bool) gin.Handl
 	return func(c *gin.Context) {
 		id, ok := parseIntParam(c, "host_id")
 		if !ok {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "无效的主机 ID",
-			})
+			respondError(c, http.StatusBadRequest, "无效的主机 ID")
 			return
 		}
 
@@ -201,9 +169,7 @@ func (s *Server) remoteProxyHandler(apiPath string, forwardQuery bool) gin.Handl
 
 		data, err := s.remoteManager.ProxyRequest(id, path)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": err.Error(),
-			})
+			respondError(c, http.StatusInternalServerError, err.Error())
 			return
 		}
 

@@ -45,8 +45,12 @@ function connectWebSocket() {
     ws.onclose = function() {
         console.log('WebSocket disconnected');
         updateConnectionStatus(false);
-        // 5秒后重连
-        reconnectTimer = setTimeout(connectWebSocket, 5000);
+        // 重连前先校验认证状态：Token失效时由fetch拦截器自动刷新，
+        // 刷新失败则跳转登录页（避免后台标签页拿旧Token无限重连）
+        fetch('/api/verify').catch(() => {}).finally(() => {
+            // 5秒后重连
+            reconnectTimer = setTimeout(connectWebSocket, 5000);
+        });
     };
 }
 

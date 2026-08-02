@@ -146,11 +146,30 @@ func createTables() error {
 	);
 	`
 
+	// Token黑名单表（登出撤销的Token持久化，重启后仍然失效）
+	tokenBlacklistTable := `
+	CREATE TABLE IF NOT EXISTS token_blacklist (
+		jti TEXT PRIMARY KEY,
+		expires_at TEXT NOT NULL
+	);
+	`
+
+	// 登录失败锁定表（重启后锁定状态不丢失）
+	loginAttemptsTable := `
+	CREATE TABLE IF NOT EXISTS login_attempts (
+		ip TEXT PRIMARY KEY,
+		count INTEGER NOT NULL DEFAULT 0,
+		last_attempt TEXT NOT NULL,
+		locked_until TEXT NOT NULL
+	);
+	`
+
 	// 执行建表语句
 	tables := []string{
 		cpuTable, memoryTable, diskTable, networkTable, networkBaselineTable, remoteHostsTable,
 		cpuAggTable, memoryAggTable, diskAggTable, networkAggTable,
 		systemMetaTable,
+		tokenBlacklistTable, loginAttemptsTable,
 	}
 	for _, table := range tables {
 		if _, err := db.Exec(table); err != nil {
