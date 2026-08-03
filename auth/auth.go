@@ -351,34 +351,39 @@ const maxLoginAttemptEntries = 10000
 
 // recordFailedAttempt 记录失败的登录尝试
 func (am *AuthManager) recordFailedAttempt(clientIP string) {
+	// 锁内只更新内存并取快照，锁外再落库，避免持锁期间做SQLite I/O
+	// （SQLite单连接+busy_timeout，锁内慢写会阻塞所有登录/锁定检查）
 	am.attemptsMu.Lock()
-	defer am.attemptsMu.Unlock()
-	
 	now := time.Now()
 	attempt, exists := am.loginAttempts[clientIP]
-	
+
 	if !exists {
 		// 达到容量上限时先清理过期条目；仍满则放弃记录（不影响正常校验）
 		if len(am.loginAttempts) >= maxLoginAttemptEntries {
 			am.pruneExpiredAttemptsLocked(now)
 			if len(am.loginAttempts) >= maxLoginAttemptEntries {
+				am.attemptsMu.Unlock()
 				return
 			}
 		}
 		attempt = &LoginAttempt{}
 		am.loginAttempts[clientIP] = attempt
 	}
-	
+
 	attempt.Count++
 	attempt.LastAttempt = now
-	
+
 	// 如果超过最大尝试次数，锁定账户
 	if attempt.Count >= am.maxLoginAttempts {
 		attempt.LockedUntil = now.Add(am.lockDuration)
 	}
-	
+
+	// 快照当前值供锁外落库
+	count, lastAttempt, lockedUntil := attempt.Count, attempt.LastAttempt, attempt.LockedUntil
+	am.attemptsMu.Unlock()
+
 	// 持久化（重启后锁定状态不丢失）
-	if err := database.SaveLoginAttempt(clientIP, attempt.Count, attempt.LastAttempt, attempt.LockedUntil); err != nil {
+	if err := database.SaveLoginAttempt(clientIP, count, lastAttempt, lockedUntil); err != nil {
 		log.Printf("持久化登录失败记录失败: %v", err)
 	}
 }
@@ -395,9 +400,10 @@ func (am *AuthManager) pruneExpiredAttemptsLocked(now time.Time) {
 // clearFailedAttempts 清除失败记录
 func (am *AuthManager) clearFailedAttempts(clientIP string) {
 	am.attemptsMu.Lock()
-	defer am.attemptsMu.Unlock()
-	
 	delete(am.loginAttempts, clientIP)
+	am.attemptsMu.Unlock()
+
+	// 锁外落库
 	if err := database.DeleteLoginAttempt(clientIP); err != nil {
 		log.Printf("清除登录失败记录失败: %v", err)
 	}
@@ -420,16 +426,23 @@ func (am *AuthManager) cleanupRoutine() {
 		}
 		am.blacklistMu.Unlock()
 		
-		// 清理登录尝试记录
+		// 清理登录尝试记录（锁内收集待删IP，锁外落库）
 		am.attemptsMu.Lock()
+		var expiredIPs []string
 		for ip, attempt := range am.loginAttempts {
 			// 如果锁定已过期且超过24小时没有尝试，删除记录
 			if now.After(attempt.LockedUntil) && now.Sub(attempt.LastAttempt) > 24*time.Hour {
 				delete(am.loginAttempts, ip)
-				database.DeleteLoginAttempt(ip)
+				expiredIPs = append(expiredIPs, ip)
 			}
 		}
 		am.attemptsMu.Unlock()
+		
+		for _, ip := range expiredIPs {
+			if err := database.DeleteLoginAttempt(ip); err != nil {
+				log.Printf("清理过期登录记录失败: %v", err)
+			}
+		}
 		
 		// 同步清理数据库中的过期黑名单
 		if err := database.CleanExpiredBlacklist(); err != nil {
